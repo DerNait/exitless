@@ -11,39 +11,74 @@ pub struct Framebuffer {
 impl Framebuffer {
     pub fn new(width: i32, height: i32, background_color: Color) -> Self {
         let color_buffer = Image::gen_image_color(width, height, background_color);
-        Framebuffer {
-            width,
-            height,
-            color_buffer,
-            background_color,
-            current_color: Color::WHITE,
-        }
+        Self { width, height, color_buffer, background_color, current_color: Color::WHITE }
     }
 
+    /// Opcional: ya no hace falta llamarla si el render 3D repinta todo.
     pub fn clear(&mut self) {
-        self.color_buffer = Image::gen_image_color(self.width, self.height, self.background_color);
-    }
-
-    pub fn clear_with(&mut self, color: Color) {
-        self.background_color = color;
-        self.clear();
-    }
-
-    pub fn set_pixel(&mut self, x: i32, y: i32) {
-        if x >= 0 && y >= 0 && x < self.width && y < self.height {
-            Image::draw_pixel(&mut self.color_buffer, x, y, self.current_color);
+        let (w, h) = (self.width as usize, self.height as usize);
+        let len = w * h * 4;
+        let c = self.background_color;
+        unsafe {
+            let base = self.color_buffer.data as *mut u8;
+            let mut i = 0;
+            while i < len {
+                *base.add(i)     = c.r;
+                *base.add(i + 1) = c.g;
+                *base.add(i + 2) = c.b;
+                *base.add(i + 3) = c.a;
+                i += 4;
+            }
         }
     }
 
-    pub fn set_background_color(&mut self, color: Color) {
-        self.background_color = color;
+    #[inline]
+    pub fn set_pixel(&mut self, x: i32, y: i32) {
+        if x < 0 || y < 0 || x >= self.width || y >= self.height { return; }
+        let idx = ((y as usize * self.width as usize) + x as usize) * 4;
+        unsafe {
+            let base = self.color_buffer.data as *mut u8;
+            *base.add(idx)     = self.current_color.r;
+            *base.add(idx + 1) = self.current_color.g;
+            *base.add(idx + 2) = self.current_color.b;
+            *base.add(idx + 3) = self.current_color.a;
+        }
     }
 
-    pub fn set_current_color(&mut self, color: Color) {
-        self.current_color = color;
+    #[inline]
+    pub fn put_pixel_rgba(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8, a: u8) {
+        if x < 0 || y < 0 || x >= self.width || y >= self.height { return; }
+        let idx = ((y as usize * self.width as usize) + x as usize) * 4;
+        unsafe {
+            let base = self.color_buffer.data as *mut u8;
+            *base.add(idx)     = r;
+            *base.add(idx + 1) = g;
+            *base.add(idx + 2) = b;
+            *base.add(idx + 3) = a;
+        }
     }
 
-    pub fn render_to_file(&self, file_path: &str) {
-        Image::export_image(&self.color_buffer, file_path);
+    #[inline]
+    pub fn fill_row(&mut self, y: i32, color: Color) {
+        if y < 0 || y >= self.height { return; }
+        let w = self.width as usize;
+        let start = (y as usize * w) * 4;
+        unsafe {
+            let base = self.color_buffer.data as *mut u8;
+            let mut i = 0usize;
+            while i < w {
+                let p = start + i * 4;
+                *base.add(p)     = color.r;
+                *base.add(p + 1) = color.g;
+                *base.add(p + 2) = color.b;
+                *base.add(p + 3) = color.a;
+                i += 1;
+            }
+        }
     }
+
+    pub fn set_background_color(&mut self, color: Color) { self.background_color = color; }
+    pub fn set_current_color(&mut self, color: Color)     { self.current_color = color; }
+
+    pub fn render_to_file(&self, file_path: &str) { Image::export_image(&self.color_buffer, file_path); }
 }
