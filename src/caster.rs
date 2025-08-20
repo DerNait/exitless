@@ -11,6 +11,12 @@ pub struct Intersect {
     pub hit_frac: f32,
 }
 
+// Define qué cuenta como pared sólida para el DDA (los sprites 'e' NO son pared)
+#[inline]
+fn is_wall(c: char) -> bool {
+    matches!(c, '+' | '-' | '|' | '#' | 'g')
+}
+
 /// Lanza un rayo desde el jugador en ángulo `a`.
 /// Si `draw_line` es true, dibuja puntos espaciados a lo largo del rayo (solo para vista 2D).
 pub fn cast_ray(
@@ -68,7 +74,8 @@ pub fn cast_ray(
         if map_y < 0 || map_y as usize >= maze.len() { break; }
         if map_x < 0 || map_x as usize >= maze[map_y as usize].len() { break; }
 
-        if maze[map_y as usize][map_x as usize] != ' ' {
+        // Solo choca si es pared sólida
+        if is_wall(maze[map_y as usize][map_x as usize]) {
             hit = true;
         }
     }

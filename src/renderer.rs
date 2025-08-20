@@ -13,6 +13,7 @@ pub fn draw_cell(
         '+' | '-' | '|' => Color::DARKGRAY,  // paredes
         'p' => Color::GREEN,                  // player start
         'g' => Color::RED,                    // goal
+        'e' => Color::YELLOW,
         _   => Color::BLANK,                  // espacios
     };
     framebuffer.set_current_color(color);

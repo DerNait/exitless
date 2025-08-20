@@ -4,14 +4,15 @@ use crate::maze::Maze;
 use crate::player::Player;
 use crate::caster::cast_ray;
 use crate::textures::TextureManager;
+use crate::sprites::{Sprite, render_sprites};
 
 fn sky_floor(fb: &mut Framebuffer) {
     let h = fb.height;
     let half = h / 2;
     let sky   = Color::new(150, 142, 59, 255);
     let floor = Color::new(161, 154, 73, 255);
-    for y in 0..half      { fb.fill_row(y, sky); }
-    for y in half..h      { fb.fill_row(y, floor); }
+    for y in 0..half { fb.fill_row(y, sky); }
+    for y in half..h { fb.fill_row(y, floor); }
 }
 
 pub fn render_world_textured(
@@ -20,6 +21,7 @@ pub fn render_world_textured(
     player: &Player,
     block_size: usize,
     tex: &TextureManager,
+    sprites: &[Sprite],
 ) {
     let w = fb.width as i32;
     let h = fb.height as i32;
@@ -29,6 +31,9 @@ pub fn render_world_textured(
 
     // repinta todo el fondo
     sky_floor(fb);
+
+    // z-buffer por columna (para ocluir sprites con paredes)
+    let mut zbuf = vec![f32::INFINITY; w as usize];
 
     for i in 0..w {
         let t = i as f32 / w as f32;
@@ -40,6 +45,9 @@ pub fn render_world_textured(
         // corrección de ojo de pez
         let delta = ray_a - player.a;
         let dist = (inter.distance * delta.cos()).max(1e-4);
+
+        // guarda para sprites
+        zbuf[i as usize] = dist;
 
         // alto proyectado
         let wall_real = block_size as f32;
@@ -64,7 +72,7 @@ pub fn render_world_textured(
         let mut tex_pos = (draw_start as f32 - (hh - line_h * 0.5)) * step;
 
         // sombreado constante por columna
-        let shade = (1.0 / (1.0 + dist * 0.003)).clamp(0.7, 1.0);
+        let shade = (1.0 / (1.0 + dist * 0.001)).clamp(0.7, 1.0);
 
         for y in draw_start..=draw_end {
             let mut ty = tex_pos as i32;
@@ -75,7 +83,7 @@ pub fn render_world_textured(
             let idx = ((ty as usize * tw) + tx as usize) * 4;
             let (r, g, b) = (tdata[idx], tdata[idx + 1], tdata[idx + 2]);
 
-            // aplica sombreado (float simple; si quieres aún más perf, pasa a fixed-point)
+            // aplica sombreado
             let rr = (r as f32 * shade) as u8;
             let gg = (g as f32 * shade) as u8;
             let bb = (b as f32 * shade) as u8;
@@ -83,4 +91,7 @@ pub fn render_world_textured(
             fb.put_pixel_rgba(i, y, rr, gg, bb, 255);
         }
     }
+
+    // Finalmente, dibujar los sprites usando el z-buffer
+    render_sprites(fb, player, sprites, tex, &zbuf, block_size);
 }

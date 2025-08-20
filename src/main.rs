@@ -1,4 +1,3 @@
-// main.rs
 mod framebuffer;
 mod maze;
 mod renderer;
@@ -8,10 +7,11 @@ mod controller;
 mod world3d;
 mod textures;
 mod maze_gen;
+mod sprites;
 
 use raylib::prelude::*;
 use raylib::consts::TextureFilter;
-use raylib::core::texture::RaylibTexture2D; // <-- importa el trait para .update_texture()
+use raylib::core::texture::RaylibTexture2D; // para .update_texture()
 
 use framebuffer::Framebuffer;
 use maze::{load_maze, find_char, maze_dims, Maze};
@@ -20,6 +20,7 @@ use renderer::render_maze;
 use controller::process_events;
 use world3d::render_world_textured;
 use textures::TextureManager;
+use sprites::{collect_sprites, Sprite};
 
 fn main() {
     let screen_w = 900;
@@ -27,12 +28,12 @@ fn main() {
 
     let (mut rl, thread) = raylib::init()
         .size(screen_w, screen_h)
-        .title("Raycasting (2D/3D + Texturas)")
+        .title("Raycasting (2D/3D + Texturas + Sprites)")
         .build();
 
     let mut framebuffer = Framebuffer::new(screen_w, screen_h, Color::BLACK);
 
-    // --- Texturas de paredes
+    // --- Texturas de paredes y sprites
     let tex_manager = TextureManager::new(&mut rl, &thread);
 
     // --- Maze y block_size
@@ -51,6 +52,9 @@ fn main() {
         std::f32::consts::PI / 3.0,
         std::f32::consts::PI / 3.0,
     );
+
+    // --- Sprites (celdas 'e' del laberinto)
+    let sprites: Vec<Sprite> = collect_sprites(&maze, block_size);
 
     // --- Modo 2D/3D
     let mut mode_3d = true;
@@ -71,8 +75,17 @@ fn main() {
         process_events(&rl, &mut player);
 
         if mode_3d {
-            render_world_textured(&mut framebuffer, &maze, &player, block_size, &tex_manager);
+            // ahora recibe sprites y dibuja con z-buffer
+            render_world_textured(
+                &mut framebuffer,
+                &maze,
+                &player,
+                block_size,
+                &tex_manager,
+                &sprites,
+            );
         } else {
+            // vista 2D de depuración
             render_maze(&mut framebuffer, &maze, block_size);
             let num_rays = framebuffer.width;
             for i in 0..num_rays {
@@ -97,7 +110,7 @@ fn main() {
         d.clear_background(Color::BLACK);
         d.draw_texture(&screen_tex, 0, 0, Color::WHITE);
         d.draw_text(
-            if mode_3d { "M: 2D | Texturas ON | WASD/Flechas" } else { "M: 3D | WASD/Flechas" },
+            if mode_3d { "M: 2D | Texturas+Sprites ON | WASD/Flechas" } else { "M: 3D | WASD/Flechas" },
             10, 10, 18, Color::RAYWHITE,
         );
     }
