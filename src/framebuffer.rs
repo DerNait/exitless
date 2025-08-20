@@ -14,7 +14,7 @@ impl Framebuffer {
         Self { width, height, color_buffer, background_color, current_color: Color::WHITE }
     }
 
-    /// Opcional: ya no hace falta llamarla si el render 3D repinta todo.
+    /// Si el 3D repinta todo (sky/floor), puedes no llamarla en 3D.
     pub fn clear(&mut self) {
         let (w, h) = (self.width as usize, self.height as usize);
         let len = w * h * 4;
@@ -55,6 +55,17 @@ impl Framebuffer {
             *base.add(idx + 1) = g;
             *base.add(idx + 2) = b;
             *base.add(idx + 3) = a;
+        }
+    }
+
+    // Opcional: single 32-bit store (según layout RGBA8)
+    #[inline]
+    pub fn put_pixel_rgba_u32(&mut self, x: i32, y: i32, rgba: u32) {
+        if x < 0 || y < 0 || x >= self.width || y >= self.height { return; }
+        let idx = ((y as usize * self.width as usize) + x as usize);
+        unsafe {
+            let base = self.color_buffer.data as *mut u32;
+            *base.add(idx) = rgba;
         }
     }
 

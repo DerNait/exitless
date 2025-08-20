@@ -1,3 +1,4 @@
+// main.rs
 mod framebuffer;
 mod maze;
 mod renderer;
@@ -11,7 +12,7 @@ mod sprites;
 
 use raylib::prelude::*;
 use raylib::consts::TextureFilter;
-use raylib::core::texture::RaylibTexture2D; // para .update_texture()
+use raylib::core::texture::RaylibTexture2D;
 
 use framebuffer::Framebuffer;
 use maze::{load_maze, find_char, maze_dims, Maze};
@@ -28,22 +29,19 @@ fn main() {
 
     let (mut rl, thread) = raylib::init()
         .size(screen_w, screen_h)
-        .title("Raycasting (2D/3D + Texturas + Sprites)")
+        .title("Raycasting (2D/3D + Texturas + Sprites animados)")
         .build();
 
     let mut framebuffer = Framebuffer::new(screen_w, screen_h, Color::BLACK);
 
-    // --- Texturas de paredes y sprites
     let tex_manager = TextureManager::new(&mut rl, &thread);
 
-    // --- Maze y block_size
     let maze: Maze = load_maze("assets/maze.txt");
     let (mw, mh) = maze_dims(&maze);
     let block_size_x = (screen_w as usize / mw).max(1);
     let block_size_y = (screen_h as usize / mh).max(1);
     let block_size = block_size_x.min(block_size_y);
 
-    // --- Player
     let (pi, pj) = find_char(&maze, 'p').unwrap_or((1, 1));
     let start_x = (pi * block_size + block_size / 2) as f32;
     let start_y = (pj * block_size + block_size / 2) as f32;
@@ -53,20 +51,20 @@ fn main() {
         std::f32::consts::PI / 3.0,
     );
 
-    // --- Sprites (celdas 'e' del laberinto)
-    let sprites: Vec<Sprite> = collect_sprites(&maze, block_size);
+    let sprites: Vec<Sprite> = collect_sprites(&maze, block_size, &tex_manager);
 
-    // --- Modo 2D/3D
     let mut mode_3d = true;
 
-    // --- Creamos una textura de pantalla UNA vez y la actualizamos cada frame
     let mut screen_tex = rl
         .load_texture_from_image(&thread, &framebuffer.color_buffer)
         .expect("No se pudo crear la textura de pantalla");
     screen_tex.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
+    // Acumulador de tiempo (o usa rl.get_time() directamente)
+    let mut time_s: f32 = 0.0;
+
     while !rl.window_should_close() {
-        framebuffer.clear();
+        time_s += rl.get_frame_time();
 
         if rl.is_key_pressed(KeyboardKey::KEY_M) {
             mode_3d = !mode_3d;
@@ -75,7 +73,7 @@ fn main() {
         process_events(&rl, &mut player);
 
         if mode_3d {
-            // ahora recibe sprites y dibuja con z-buffer
+            // No limpiamos: sky_floor repinta todo el fondo
             render_world_textured(
                 &mut framebuffer,
                 &maze,
@@ -83,9 +81,11 @@ fn main() {
                 block_size,
                 &tex_manager,
                 &sprites,
+                time_s,
             );
         } else {
-            // vista 2D de depuración
+            // En 2D sí limpiamos por si el laberinto no cubre 100% de pantalla
+            framebuffer.clear();
             render_maze(&mut framebuffer, &maze, block_size);
             let num_rays = framebuffer.width;
             for i in 0..num_rays {
@@ -95,7 +95,6 @@ fn main() {
             }
         }
 
-        // --- Actualizamos los píxeles de la textura ya existente
         unsafe {
             let len = (framebuffer.width * framebuffer.height * 4) as usize; // RGBA8
             let slice = std::slice::from_raw_parts(
@@ -105,7 +104,6 @@ fn main() {
             screen_tex.update_texture(slice).expect("update_texture falló");
         }
 
-        // --- Dibujar
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
         d.draw_texture(&screen_tex, 0, 0, Color::WHITE);

@@ -1,6 +1,4 @@
-// src/sprites.rs
 use raylib::prelude::Vector2;
-
 use crate::framebuffer::Framebuffer;
 use crate::maze::Maze;
 use crate::player::Player;
@@ -8,152 +6,219 @@ use crate::textures::TextureManager;
 
 const PI: f32 = std::f32::consts::PI;
 const TWO_PI: f32 = std::f32::consts::TAU;
-
-// Color clave para transparencia (por si tu PNG no tiene alpha)
-const TRANSPARENT_KEY: (u8, u8, u8) = (152, 0, 136);
+// Si tus PNGs tienen alpha real, puedes quitar el key para ahorrar comparaciones:
+const TRANSPARENT_KEY: (u8,u8,u8) = (152,0,136);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Sprite {
-    pub pos: Vector2,  // coordenadas en píxeles del framebuffer (como el player)
-    pub tex: char,     // id de textura en TextureManager (por ej. 'e')
-    pub scale: f32,    // 1.0 = tamaño base (≈ block_size)
+    pub pos: Vector2,
+    pub tex: char,
+    pub scale: f32,
+    // Anim
+    pub frames: usize,
+    pub fps: f32,
+    pub phase: usize,
 }
 
 impl Sprite {
-    pub fn new(pos: Vector2, tex: char, scale: f32) -> Self {
-        Self { pos, tex, scale }
+    pub fn new_animated(pos: Vector2, tex: char, scale: f32, frames: usize, fps: f32, phase: usize) -> Self {
+        Self { pos, tex, scale, frames: frames.max(1), fps, phase }
     }
 }
 
-/// Extrae sprites desde el Maze: cualquier celda con 'e' se convierte en sprite.
-/// (La celda sigue siendo transitable; el raycaster NO debe tratarlos como pared.)
-pub fn collect_sprites(maze: &Maze, block_size: usize) -> Vec<Sprite> {
+pub fn collect_sprites(maze: &Maze, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
     let mut v = Vec::new();
     for (j, row) in maze.iter().enumerate() {
         for (i, &c) in row.iter().enumerate() {
             if c == 'e' {
                 let x = (i * block_size + block_size / 2) as f32;
                 let y = (j * block_size + block_size / 2) as f32;
-                v.push(Sprite::new(Vector2::new(x, y), 'e', 1.0));
+                let frames = tex.sheet_frames('e');
+                v.push(Sprite::new_animated(Vector2::new(x,y), 'e', 1.0, frames, 8.0, (i+j)%frames));
             }
         }
     }
     v
 }
 
-#[inline]
-fn normalize_angle(mut a: f32) -> f32 {
-    while a >  PI { a -= TWO_PI; }
-    while a < -PI { a += TWO_PI; }
-    a
-}
+#[inline] fn normalize_angle(mut a: f32) -> f32 { while a>PI {a-=TWO_PI;} while a<(-PI) {a+=TWO_PI;} a }
 
-/// Renderiza todos los sprites con z‑buffer y orden por distancia.
 pub fn render_sprites(
     fb: &mut Framebuffer,
     player: &Player,
     sprites: &[Sprite],
     tex: &TextureManager,
-    zbuf: &[f32],           // z-buffer (una distancia por columna de pantalla)
+    zbuf: &[f32],
     block_size: usize,
+    time_s: f32,
 ) {
-    if sprites.is_empty() { return; }
-
     let w = fb.width as i32;
     let h = fb.height as i32;
     let hw = w as f32 * 0.5;
     let hh = h as f32 * 0.5;
-
-    // Distancia al plano de proyección (misma que usas en world3d)
     let dist_to_plane = hw / (player.fov * 0.5).tan();
 
-    // Ordenar back-to-front (lejos -> cerca)
+    // Orden por distancia (lejos -> cerca)
     let mut order: Vec<(usize, f32)> = sprites.iter().enumerate()
-        .map(|(idx, s)| {
-            let dx = s.pos.x - player.pos.x;
-            let dy = s.pos.y - player.pos.y;
-            (idx, (dx*dx + dy*dy).sqrt())
-        })
+        .map(|(idx,s)| { let dx=s.pos.x-player.pos.x; let dy=s.pos.y-player.pos.y; (idx,(dx*dx+dy*dy).sqrt()) })
         .collect();
-    order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|a,b| b.1.partial_cmp(&a.1).unwrap());
 
-    for (idx, euclid_dist) in order {
+    for (idx, euclid) in order {
         let s = sprites[idx];
-
         let dx = s.pos.x - player.pos.x;
         let dy = s.pos.y - player.pos.y;
 
-        // 1) Ángulo hacia el sprite y diferencia con la vista del jugador
-        let sprite_a = dy.atan2(dx);
-        let mut da = normalize_angle(sprite_a - player.a);
+        // === Proyección robusta sin atan/tan ===
+        let ca = player.a.cos();
+        let sa = player.a.sin();
 
-        // Si está muy fuera del FOV, lo omitimos (pequeño margen para bordes)
-        let limit = player.fov * 0.5 + 0.2;
-        if da.abs() > limit { continue; }
+        // Profundidad perpendicular (adelante de la cámara)
+        let mut perp = dx * ca + dy * sa;
+        if perp <= 0.0 { continue; } // detrás del plano de la cámara
 
-        // 2) Distancia "perpendicular" (compensa fish-eye)
-        //    Esto debe compararse contra el z-buffer y usarse para el tamaño.
-        let perp_dist = (euclid_dist * da.cos()).max(1e-4);
+        // NEAR-PLANE: evita divisiones enormes y “corridas” laterales al estar encima
+        let near_plane = 1.0;
+        if perp < near_plane { perp = near_plane; }
 
-        // 3) Tamaño proyectado (inversamente proporcional a la distancia)
+        // Desplazamiento lateral (derecha de la cámara)
+        let lateral = -dx * sa + dy * ca;
+
+        // Culling por FOV sin ángulos (igual que antes, pero usa 'perp' clampado):
+        /* let half_fov_tan = (player.fov * 0.5).tan();
+        if (lateral.abs() / perp) > (half_fov_tan) { continue; } */
+
+        // X en pantalla usando la PROFUNDIDAD CLAMPADA
+        let screen_x = hw + (lateral * dist_to_plane) / perp;
+
+        // Tamaño proyectado usando la misma PROFUNDIDAD CLAMPADA
         let base = block_size as f32 * s.scale;
-        let sprite_h = ((base * dist_to_plane) / perp_dist).max(1.0);
-        let sprite_w = sprite_h; // billboard cuadrado
+        let mut sprite_h = ((base * dist_to_plane) / perp).max(1.0);
+        let mut sprite_w = sprite_h;
 
-        // 4) Posición horizontal en pantalla (centro + desplazamiento por tan(da))
-        let screen_x = hw + da.tan() * dist_to_plane;
+        // Esquina REAL (float)
+        let left = screen_x - sprite_w * 0.5;
+        let top  = hh       - sprite_h * 0.5;
 
-        // 5) Rectángulo en pantalla
-        let start_x = (screen_x - sprite_w * 0.5).floor() as i32;
-        let end_x   = (screen_x + sprite_w * 0.5).ceil()  as i32;
+        // Rect crudo (sin clamp)
+        let start_x_raw = left.floor() as i32;
+        let end_x_raw   = (left + sprite_w).ceil() as i32 - 1;
+        let start_y_raw = top.floor() as i32;
+        let end_y_raw   = (top + sprite_h).ceil() as i32 - 1;
 
-        let start_y = (hh - sprite_h * 0.5).floor() as i32;
-        let end_y   = (hh + sprite_h * 0.5).ceil()  as i32;
+        // Early‑out por *rectángulo fuera de pantalla* (culling correcto por borde)
+        if end_x_raw < 0 || start_x_raw > (w-1) || end_y_raw < 0 || start_y_raw > (h-1) {
+            continue;
+        }
 
-        // Textura del sprite
-        let (tw, th, tdata) = tex.tex_view(s.tex);
-        let tw_i = tw as i32;
-        let th_i = th as i32;
+        // Clip a los bordes de pantalla (tu código de siempre)
+        let mut start_x = start_x_raw.max(0);
+        let mut end_x   = end_x_raw.min(w-1);
+        let mut start_y = start_y_raw.max(0);
+        let mut end_y   = end_y_raw.min(h-1);
+        if start_x > end_x || start_y > end_y { continue; }
 
-        // Sombrado sutil por distancia
-        let shade = (1.0 / (1.0 + perp_dist * 0.001)).clamp(0.6, 1.0);
+        // Anim: frame actual (fps lógicos)
+        let anim_fps = s.fps.max(1.0);
+        let frame_i = (time_s * anim_fps).floor() as usize;
+        let frame = if s.frames>1 { (frame_i + s.phase) % s.frames } else { 0 };
 
-        // Barrido por columnas (x)
-        let x0 = start_x.max(0);
-        let x1 = end_x.min(w - 1);
-        for x in x0..=x1 {
-            // Oclusión con paredes: si la pared en esa columna está más cerca, salta
-            if zbuf[x as usize] <= perp_dist { continue; }
+        // Vista del frame actual (una sola vez por sprite)
+        let (tw, th, x0, y0, fw_us, fh_us, tdata) = tex.sheet_frame_view(s.tex, frame);
+        let fw = fw_us as i32;
+        let fh = fh_us as i32;
 
-            // Coord. de textura horizontal (0..tw-1)
-            let tx = (((x - start_x) as f32) * tw as f32 / sprite_w) as i32;
-            if tx < 0 || tx >= tw_i { continue; }
+        // Pasos en textura
+        let step_tx = fw as f32 / sprite_w;
+        let step_ty = fh as f32 / sprite_h;
 
-            // Barrido vertical (y)
-            let y0 = start_y.max(0);
-            let y1 = end_y.min(h - 1);
-            for y in y0..=y1 {
-                // Coord. de textura vertical (0..th-1)
-                let ty = (((y - start_y) as f32) * th as f32 / sprite_h) as i32;
-                if ty < 0 || ty >= th_i { continue; }
+        // IMPORTANTÍSIMO: inicia acumuladores respecto a la esquina REAL (left/top),
+        // no respecto al start_x/start_y clampeados. Esto evita el "deslizamiento".
+        let mut tex_xf = (start_x as f32 - left) * step_tx;
+        let mut tex_yf_start = (start_y as f32 - top) * step_ty;
 
-                let idx = ((ty as usize * tw) + tx as usize) * 4;
-                let r = tdata[idx];
-                let g = tdata[idx + 1];
-                let b = tdata[idx + 2];
-                let a = tdata[idx + 3];
+        // Sombreado por distancia
+        let shade = (1.0 / (1.0 + perp * 0.001)).clamp(0.6, 1.0);
 
-                // Transparencia: alpha real o “magenta” clave
-                let is_key = (r, g, b) == TRANSPARENT_KEY;
-                if a == 0 || is_key { continue; }
+        // Column skipping + replicación para rendimiento sin artefactos
+        let mut step_x_cols = 1;
 
-                // Aplica sombreados simples por distancia
-                let rr = (r as f32 * shade) as u8;
-                let gg = (g as f32 * shade) as u8;
-                let bb = (b as f32 * shade) as u8;
+        let mut x = start_x;
+        while x <= end_x {
+            if zbuf[x as usize] > perp {
+                // tex_x usando acumulador (sin aliasing)
+                let mut tex_x = tex_xf.floor() as i32;
+                if tex_x < 0 { tex_x = 0; }
+                if tex_x >= fw { tex_x = fw - 1; }
 
-                fb.put_pixel_rgba(x, y, rr, gg, bb, a);
+                // Barrido vertical con acumulador ty
+                let mut y = start_y;
+                let mut tex_yf = tex_yf_start;
+                while y <= end_y {
+                    let mut ty = tex_yf.floor() as i32;
+                    if ty < 0 { ty = 0; }
+                    if ty >= fh { ty = fh - 1; }
+
+                    let px = x0 as i32 + tex_x;
+                    let py = y0 as i32 + ty;
+                    let idx = (((py as usize) * tw) + (px as usize)) * 4;
+
+                    let r = tdata[idx];
+                    let g = tdata[idx + 1];
+                    let b = tdata[idx + 2];
+                    let a = tdata[idx + 3];
+
+                    // (si usas alpha real, puedes usar solamente if a < 8 { ... })
+                    if !(a == 0 || (r,g,b) == TRANSPARENT_KEY) {
+                        let rr = (r as f32 * shade) as u8;
+                        let gg = (g as f32 * shade) as u8;
+                        let bb = (b as f32 * shade) as u8;
+                        fb.put_pixel_rgba(x, y, rr, gg, bb, a);
+                    }
+
+                    y += 1;
+                    tex_yf += step_ty;
+                }
+
+                // Replica columnas si saltamos columnas
+                if step_x_cols > 1 {
+                    for rx in 1..step_x_cols {
+                        let xx = x + rx as i32;
+                        if xx > end_x { break; }
+                        if zbuf[xx as usize] <= perp { break; }
+
+                        let mut y2 = start_y;
+                        let mut tex_yf2 = tex_yf_start;
+                        while y2 <= end_y {
+                            let mut ty = tex_yf2.floor() as i32;
+                            if ty < 0 { ty = 0; }
+                            if ty >= fh { ty = fh - 1; }
+
+                            let px = x0 as i32 + tex_x;
+                            let py = y0 as i32 + ty;
+                            let idx = (((py as usize) * tw) + (px as usize)) * 4;
+
+                            let r = tdata[idx];
+                            let g = tdata[idx + 1];
+                            let b = tdata[idx + 2];
+                            let a = tdata[idx + 3];
+
+                            if !(a == 0 || (r,g,b) == TRANSPARENT_KEY) {
+                                let rr = (r as f32 * shade) as u8;
+                                let gg = (g as f32 * shade) as u8;
+                                let bb = (b as f32 * shade) as u8;
+                                fb.put_pixel_rgba(xx, y2, rr, gg, bb, a);
+                            }
+
+                            y2 += 1;
+                            tex_yf2 += step_ty;
+                        }
+                    }
+                }
             }
+
+            x += step_x_cols as i32;
+            tex_xf += step_tx * step_x_cols as f32; // avanza según el salto aplicado
         }
     }
 }
