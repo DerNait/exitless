@@ -17,6 +17,11 @@ fn is_wall(c: char) -> bool {
     matches!(c, '+' | '-' | '|' | '#' | 'g')
 }
 
+#[inline]
+pub fn is_passable(c: char) -> bool {
+    !is_wall(c)
+}
+
 /// Lanza un rayo desde el jugador en ángulo `a`.
 /// Si `draw_line` es true, dibuja puntos espaciados a lo largo del rayo (solo para vista 2D).
 pub fn cast_ray(

@@ -5,12 +5,13 @@ use crate::player::Player;
 use crate::caster::cast_ray;
 use crate::textures::TextureManager;
 use crate::sprites::{Sprite, render_sprites};
+use crate::enemy::Enemy;
 
 fn sky_floor(fb: &mut Framebuffer) {
     let h = fb.height;
     let half = h / 2;
     let sky   = Color::new(150, 142, 59, 255);
-    let floor = Color::new(161, 154, 73, 255);
+    let floor = Color::new(133, 111, 27, 255);
     for y in 0..half { fb.fill_row(y, sky); }
     for y in half..h { fb.fill_row(y, floor); }
 }
@@ -22,6 +23,7 @@ pub fn render_world_textured(
     block_size: usize,
     tex: &TextureManager,
     sprites: &[Sprite],
+    enemies: &[Enemy],    // 👈 añadido
     time_s: f32,
 ) {
     let w = fb.width as i32;
@@ -32,18 +34,15 @@ pub fn render_world_textured(
 
     sky_floor(fb);
 
-    // z-buffer por columna (para ocluir sprites con paredes)
+    // z-buffer por columna
     let mut zbuf = vec![f32::INFINITY; w as usize];
 
     for i in 0..w {
         let t = i as f32 / w as f32;
         let ray_a = player.a - (player.fov * 0.5) + (player.fov * t);
-
         let inter = cast_ray(fb, maze, player, block_size, ray_a, false);
-
         let delta = ray_a - player.a;
         let dist = (inter.distance * delta.cos()).max(1e-4);
-
         zbuf[i as usize] = dist;
 
         let wall_real = block_size as f32;
@@ -83,5 +82,21 @@ pub fn render_world_textured(
         }
     }
 
+    // Sprites decorativos
     render_sprites(fb, player, sprites, tex, &zbuf, block_size, time_s);
+
+    // Enemigos como sprites animados dinámicos
+    use crate::sprites::Sprite;
+    let mut dyn_sprites: Vec<Sprite> = Vec::new();
+    for e in enemies {
+        dyn_sprites.push(Sprite {
+            pos: e.pos,
+            tex: 'e',
+            scale: 1.0,
+            frames: tex.sheet_frames('e'),
+            fps: 8.0,
+            phase: 0,
+        });
+    }
+    render_sprites(fb, player, &dyn_sprites, tex, &zbuf, block_size, time_s);
 }
