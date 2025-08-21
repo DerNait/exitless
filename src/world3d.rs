@@ -7,16 +7,19 @@ use crate::textures::TextureManager;
 use crate::sprites::{Sprite, render_sprites};
 use crate::enemy::Enemy;
 
-fn sky_floor(fb: &mut Framebuffer) {
-    let h = fb.height;
-    let half = h / 2;
+fn sky_floor_region(fb: &mut Framebuffer, y0: i32, vh: i32) {
+    let half = vh / 2;
     let sky   = Color::new(150, 142, 59, 255);
     let floor = Color::new(133, 111, 27, 255);
-    for y in 0..half { fb.fill_row(y, sky); }
-    for y in half..h { fb.fill_row(y, floor); }
+    for i in 0..half {
+        fb.fill_row(y0 + i, sky);
+    }
+    for i in half..vh {
+        fb.fill_row(y0 + i, floor);
+    }
 }
 
-/// Dibuja una imagen del TextureManager a pantalla completa (nearest).
+/// Dibuja una imagen completa a pantalla (overlay)
 pub fn draw_overlay_fullscreen(fb: &mut Framebuffer, tex: &TextureManager, key: char) {
     let (src_w, src_h, data) = tex.tex_view(key);
     if src_w == 0 || src_h == 0 { return; }
@@ -25,20 +28,16 @@ pub fn draw_overlay_fullscreen(fb: &mut Framebuffer, tex: &TextureManager, key: 
     let dst_h = fb.height as i32;
 
     for y in 0..dst_h {
-        // fila fuente (nearest)
         let sy = ((y as f32 / dst_h as f32) * src_h as f32).floor() as i32;
         let sy = sy.clamp(0, src_h as i32 - 1);
-
         for x in 0..dst_w {
             let sx = ((x as f32 / dst_w as f32) * src_w as f32).floor() as i32;
             let sx = sx.clamp(0, src_w as i32 - 1);
-
             let idx = (((sy as usize) * src_w) + (sx as usize)) * 4;
             let r = data[idx];
             let g = data[idx + 1];
             let b = data[idx + 2];
             let a = data[idx + 3];
-            // Si tu jumpscare tiene alpha, respétalo; si no, a será 255
             if a > 0 {
                 fb.put_pixel_rgba(x, y, r, g, b, a);
             }
@@ -46,13 +45,13 @@ pub fn draw_overlay_fullscreen(fb: &mut Framebuffer, tex: &TextureManager, key: 
     }
 }
 
-/// Llena la pantalla con negro (el texto "GAME OVER" se dibuja en main con Raylib)
 pub fn draw_game_over_background(fb: &mut Framebuffer) {
     for y in 0..fb.height {
         fb.fill_row(y, Color::BLACK);
     }
 }
 
+/// Render 3D **en un viewport** (0..w, y0..y0+vh). No toca el HUD.
 pub fn render_world_textured(
     fb: &mut Framebuffer,
     maze: &Maze,
@@ -60,16 +59,21 @@ pub fn render_world_textured(
     block_size: usize,
     tex: &TextureManager,
     sprites: &[Sprite],
-    enemies: &[Enemy],    // 👈 añadido
+    enemies: &[Enemy],
     time_s: f32,
+    viewport_y0: i32,
+    viewport_h: i32,
 ) {
     let w = fb.width as i32;
-    let h = fb.height as i32;
+    let h = viewport_h.max(1);
+    let y_off = viewport_y0.max(0);
+
     let hw = w as f32 * 0.5;
     let hh = h as f32 * 0.5;
     let dist_to_plane = hw / (player.fov * 0.5).tan();
 
-    sky_floor(fb);
+    // Fondo cielo/suelo dentro del viewport
+    sky_floor_region(fb, y_off, h);
 
     // z-buffer por columna
     let mut zbuf = vec![f32::INFINITY; w as usize];
@@ -85,10 +89,13 @@ pub fn render_world_textured(
         let wall_real = block_size as f32;
         let line_h = ((wall_real * dist_to_plane) / dist).max(1.0);
 
-        let mut draw_start = (hh - line_h * 0.5).floor() as i32;
-        let mut draw_end   = (hh + line_h * 0.5).ceil()  as i32;
-        if draw_start < 0 { draw_start = 0; }
-        if draw_end >= h  { draw_end = h - 1; }
+        let mut draw_start = (hh - line_h * 0.5).floor() as i32 + y_off;
+        let mut draw_end   = (hh + line_h * 0.5).ceil()  as i32 + y_off;
+
+        let y_min = y_off;
+        let y_max = y_off + h - 1;
+        if draw_start < y_min { draw_start = y_min; }
+        if draw_end   > y_max { draw_end   = y_max; }
 
         let ch = if inter.impact == ' ' { '#' } else { inter.impact };
         let (tw, th, tdata) = tex.tex_view(ch);
@@ -98,7 +105,9 @@ pub fn render_world_textured(
         if tx >= tw as i32 { tx = tw as i32 - 1; }
 
         let step = th as f32 / line_h;
-        let mut tex_pos = (draw_start as f32 - (hh - line_h * 0.5)) * step;
+        let start_tex_pos = ((draw_start as f32 - ((y_off as f32) + hh - line_h * 0.5)) * step)
+            .max(0.0);
+        let mut tex_pos = start_tex_pos;
 
         let shade = (1.0 / (1.0 + dist * 0.001)).clamp(0.7, 1.0);
 
@@ -119,14 +128,14 @@ pub fn render_world_textured(
         }
     }
 
-    // Sprites decorativos
-    render_sprites(fb, player, sprites, tex, &zbuf, block_size, time_s);
+    // Sprites decorativos (si tienes)
+    render_sprites(fb, player, sprites, tex, &zbuf, block_size, time_s, y_off, h);
 
     // Enemigos como sprites animados dinámicos
-    use crate::sprites::Sprite;
-    let mut dyn_sprites: Vec<Sprite> = Vec::new();
+    use crate::sprites::Sprite as DynSprite;
+    let mut dyn_sprites: Vec<DynSprite> = Vec::new();
     for e in enemies {
-        dyn_sprites.push(Sprite {
+        dyn_sprites.push(DynSprite {
             pos: e.pos,
             tex: 'e',
             scale: 1.0,
@@ -135,5 +144,5 @@ pub fn render_world_textured(
             phase: 0,
         });
     }
-    render_sprites(fb, player, &dyn_sprites, tex, &zbuf, block_size, time_s);
+    render_sprites(fb, player, &dyn_sprites, tex, &zbuf, block_size, time_s, y_off, h);
 }

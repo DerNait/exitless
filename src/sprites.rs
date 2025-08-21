@@ -14,7 +14,6 @@ pub struct Sprite {
     pub pos: Vector2,
     pub tex: char,
     pub scale: f32,
-    // Anim
     pub frames: usize,
     pub fps: f32,
     pub phase: usize,
@@ -51,9 +50,12 @@ pub fn render_sprites(
     zbuf: &[f32],
     block_size: usize,
     time_s: f32,
+    viewport_y0: i32,
+    viewport_h: i32,
 ) {
     let w = fb.width as i32;
-    let h = fb.height as i32;
+    let h = viewport_h.max(1);
+    let y_off = viewport_y0.max(0);
     let hw = w as f32 * 0.5;
     let hh = h as f32 * 0.5;
     let dist_to_plane = hw / (player.fov * 0.5).tan();
@@ -64,94 +66,74 @@ pub fn render_sprites(
         .collect();
     order.sort_by(|a,b| b.1.partial_cmp(&a.1).unwrap());
 
-    for (idx, euclid) in order {
+    for (idx, _euclid) in order {
         let s = sprites[idx];
         let dx = s.pos.x - player.pos.x;
         let dy = s.pos.y - player.pos.y;
 
-        // === Proyección robusta sin atan/tan ===
         let ca = player.a.cos();
         let sa = player.a.sin();
 
-        // Profundidad perpendicular (adelante de la cámara)
         let mut perp = dx * ca + dy * sa;
-        if perp <= 0.0 { continue; } // detrás del plano de la cámara
+        if perp <= 0.0 { continue; }
 
-        // NEAR-PLANE: evita divisiones enormes y “corridas” laterales al estar encima
         let near_plane = 1.0;
         if perp < near_plane { perp = near_plane; }
 
-        // Desplazamiento lateral (derecha de la cámara)
         let lateral = -dx * sa + dy * ca;
 
-        // Culling por FOV sin ángulos (igual que antes, pero usa 'perp' clampado):
-        /* let half_fov_tan = (player.fov * 0.5).tan();
-        if (lateral.abs() / perp) > (half_fov_tan) { continue; } */
-
-        // X en pantalla usando la PROFUNDIDAD CLAMPADA
         let screen_x = hw + (lateral * dist_to_plane) / perp;
-
-        // Tamaño proyectado usando la misma PROFUNDIDAD CLAMPADA
         let base = block_size as f32 * s.scale;
         let mut sprite_h = ((base * dist_to_plane) / perp).max(1.0);
         let mut sprite_w = sprite_h;
 
-        // Esquina REAL (float)
         let left = screen_x - sprite_w * 0.5;
-        let top  = hh       - sprite_h * 0.5;
+        let top  = (y_off as f32) + hh - sprite_h * 0.5;
 
-        // Rect crudo (sin clamp)
         let start_x_raw = left.floor() as i32;
         let end_x_raw   = (left + sprite_w).ceil() as i32 - 1;
         let start_y_raw = top.floor() as i32;
         let end_y_raw   = (top + sprite_h).ceil() as i32 - 1;
 
-        // Early‑out por *rectángulo fuera de pantalla* (culling correcto por borde)
-        if end_x_raw < 0 || start_x_raw > (w-1) || end_y_raw < 0 || start_y_raw > (h-1) {
+        // Clip a viewport
+        let y_min = y_off;
+        let y_max = y_off + h - 1;
+
+        if end_x_raw < 0 || start_x_raw > (w-1) || end_y_raw < y_min || start_y_raw > y_max {
             continue;
         }
 
-        // Clip a los bordes de pantalla (tu código de siempre)
         let mut start_x = start_x_raw.max(0);
         let mut end_x   = end_x_raw.min(w-1);
-        let mut start_y = start_y_raw.max(0);
-        let mut end_y   = end_y_raw.min(h-1);
+        let mut start_y = start_y_raw.max(y_min);
+        let mut end_y   = end_y_raw.min(y_max);
         if start_x > end_x || start_y > end_y { continue; }
 
-        // Anim: frame actual (fps lógicos)
         let anim_fps = s.fps.max(1.0);
         let frame_i = (time_s * anim_fps).floor() as usize;
         let frame = if s.frames>1 { (frame_i + s.phase) % s.frames } else { 0 };
 
-        // Vista del frame actual (una sola vez por sprite)
         let (tw, th, x0, y0, fw_us, fh_us, tdata) = tex.sheet_frame_view(s.tex, frame);
         let fw = fw_us as i32;
         let fh = fh_us as i32;
 
-        // Pasos en textura
         let step_tx = fw as f32 / sprite_w;
         let step_ty = fh as f32 / sprite_h;
 
-        // IMPORTANTÍSIMO: inicia acumuladores respecto a la esquina REAL (left/top),
-        // no respecto al start_x/start_y clampeados. Esto evita el "deslizamiento".
         let mut tex_xf = (start_x as f32 - left) * step_tx;
         let mut tex_yf_start = (start_y as f32 - top) * step_ty;
 
-        // Sombreado por distancia
         let shade = (1.0 / (1.0 + perp * 0.001)).clamp(0.6, 1.0);
 
-        // Column skipping + replicación para rendimiento sin artefactos
         let mut step_x_cols = 1;
 
         let mut x = start_x;
         while x <= end_x {
             if zbuf[x as usize] > perp {
-                // tex_x usando acumulador (sin aliasing)
                 let mut tex_x = tex_xf.floor() as i32;
                 if tex_x < 0 { tex_x = 0; }
                 if tex_x >= fw { tex_x = fw - 1; }
 
-                // Barrido vertical con acumulador ty
                 let mut y = start_y;
                 let mut tex_yf = tex_yf_start;
                 while y <= end_y {
@@ -168,7 +150,6 @@ pub fn render_sprites(
                     let b = tdata[idx + 2];
                     let a = tdata[idx + 3];
 
-                    // (si usas alpha real, puedes usar solamente if a < 8 { ... })
                     if !(a == 0 || (r,g,b) == TRANSPARENT_KEY) {
                         let rr = (r as f32 * shade) as u8;
                         let gg = (g as f32 * shade) as u8;
@@ -180,7 +161,6 @@ pub fn render_sprites(
                     tex_yf += step_ty;
                 }
 
-                // Replica columnas si saltamos columnas
                 if step_x_cols > 1 {
                     for rx in 1..step_x_cols {
                         let xx = x + rx as i32;
@@ -218,7 +198,7 @@ pub fn render_sprites(
             }
 
             x += step_x_cols as i32;
-            tex_xf += step_tx * step_x_cols as f32; // avanza según el salto aplicado
+            tex_xf += step_tx * step_x_cols as f32;
         }
     }
 }
