@@ -71,15 +71,18 @@ pub fn render_maze(
     }
 }
 
-/// Render de MINIMAPA dentro de un rectángulo (x,y,w,h).
-/// Dibuja paredes/espacios, jugador, enemigos, línea de dirección y **rayos de visión**.
-pub fn render_minimap(
+/// Mini-mapa “zoom cam” suave: ventana de `view_w_cells`×`view_h_cells`
+/// centrada en el jugador con **offset fraccionario** y clamped a bordes.
+/// Dibuja paredes/espacios por *pixel*, jugador, enemigos y rayos de visión.
+pub fn render_minimap_zoomed(
     fb: &mut Framebuffer,
     maze: &Maze,
     player: &Player,
     enemies: &[Enemy],
     block_size: usize,
     x: i32, y: i32, w: i32, h: i32,
+    view_w_cells: i32,
+    view_h_cells: i32,
     style: &MinimapColors,
 ) {
     if w <= 0 || h <= 0 { return; }
@@ -87,81 +90,111 @@ pub fn render_minimap(
     if rows == 0 { return; }
     let cols = maze[0].len() as i32;
 
-    // Tamaño de celda destino (px)
-    let csx = (w as f32 / cols as f32).max(1.0) as i32;
-    let csy = (h as f32 / rows as f32).max(1.0) as i32;
+    // Tamaño de ventana en celdas (clamp a mapa)
+    let vw = view_w_cells.clamp(1, cols);
+    let vh = view_h_cells.clamp(1, rows);
+
+    // Centro del jugador en celdas (float)
+    let pcx = player.pos.x / block_size as f32;
+    let pcy = player.pos.y / block_size as f32;
+
+    // Origen fraccional de la ventana (clamp a bordes, ¡no redondeamos!)
+    let mut start_i_f = pcx - (vw as f32) * 0.5;
+    let mut start_j_f = pcy - (vh as f32) * 0.5;
+    let max_start_i_f = (cols - vw).max(0) as f32;
+    let max_start_j_f = (rows - vh).max(0) as f32;
+    if start_i_f < 0.0 { start_i_f = 0.0; }
+    if start_j_f < 0.0 { start_j_f = 0.0; }
+    if start_i_f > max_start_i_f { start_i_f = max_start_i_f; }
+    if start_j_f > max_start_j_f { start_j_f = max_start_j_f; }
 
     // Fondo/borde del minimapa
     fill_rect(fb, x - 2, y - 2, w + 4, h + 4, style.frame);
 
-    // Dibuja celdas
-    for j in 0..rows {
-        for i in 0..cols {
+    // --- Dibujo por pixel (nearest) sin dejar bordes ---
+    for yy in 0..h {
+        // v en [0,1)
+        let v = (yy as f32 + 0.5) / (h as f32);
+        let sy = start_j_f + v * (vh as f32);
+        // celda Y
+        let mut j = sy.floor() as i32;
+        if j < 0 { j = 0; }
+        if j >= rows { j = rows - 1; }
+
+        for xx in 0..w {
+            let u = (xx as f32 + 0.5) / (w as f32);
+            let sx = start_i_f + u * (vw as f32);
+            // celda X
+            let mut i = sx.floor() as i32;
+            if i < 0 { i = 0; }
+            if i >= cols { i = cols - 1; }
+
             let cell = maze[j as usize][i as usize];
             let (r,g,b,a) = match cell {
                 '+' | '-' | '|' | '#' => style.wall,
                 'g' => style.goal,
                 _    => style.empty,
             };
-            let dx = x + i * csx;
-            let dy = y + j * csy;
-            for yy in 0..csy {
-                for xx in 0..csx {
-                    fb.put_pixel_rgba(dx + xx, dy + yy, r, g, b, a);
-                }
-            }
+            fb.put_pixel_rgba(x + xx, y + yy, r, g, b, a);
         }
     }
 
-    // Player en minimapa
-    let px_cells = player.pos.x / block_size as f32;
-    let py_cells = player.pos.y / block_size as f32;
-    let pxi = (x as f32 + px_cells * csx as f32) as i32;
-    let pyi = (y as f32 + py_cells * csy as f32) as i32;
-    draw_disc(fb, pxi, pyi, (csx.min(csy) / 3).max(2), style.player);
+    // Map helpers: de coords de celda (float) -> pixel en el rectángulo
+    let to_px = |cx: f32, cy: f32| -> (i32,i32) {
+        let u = ((cx - start_i_f) / (vw as f32)).clamp(0.0, 1.0);
+        let v = ((cy - start_j_f) / (vh as f32)).clamp(0.0, 1.0);
+        let px = x + (u * (w as f32 - 1.0)).round() as i32;
+        let py = y + (v * (h as f32 - 1.0)).round() as i32;
+        (px, py)
+    };
 
-    // Rayos de visión (sampleado moderado para rendimiento)
-    let n_rays = (w / 8).clamp(24, 96) as usize; // de 24 a 96 rayos según ancho
+    // Jugador
+    let (pxi, pyi) = to_px(pcx, pcy);
+    let cell_px = ((w as f32 / vw as f32).min(h as f32 / vh as f32)) as i32;
+    let pr = (cell_px / 3).max(2);
+    draw_disc(fb, pxi, pyi, pr, style.player);
+
+    // Rayos de visión (clamp a la ventana)
+    let n_rays = (w / 8).clamp(24, 96) as usize;
     for k in 0..n_rays {
         let t = if n_rays > 1 { k as f32 / (n_rays - 1) as f32 } else { 0.5 };
         let ray_a = player.a - (player.fov * 0.5) + (player.fov * t);
-        let inter: Intersect = cast_ray(
-            fb,             // no dibuja en 3D; draw_line=false
-            maze,
-            player,
-            block_size,
-            ray_a,
-            false,
-        );
+        let inter: Intersect = cast_ray(fb, maze, player, block_size, ray_a, false);
 
         let dir_x = ray_a.cos();
         let dir_y = ray_a.sin();
-        let hit_world_x = player.pos.x + inter.distance * dir_x;
-        let hit_world_y = player.pos.y + inter.distance * dir_y;
+        let hx_cells = (player.pos.x + inter.distance * dir_x) / block_size as f32;
+        let hy_cells = (player.pos.y + inter.distance * dir_y) / block_size as f32;
 
-        // Convertir a coords de celdas → píxeles en el rectángulo del minimapa
-        let hx_cells = hit_world_x / block_size as f32;
-        let hy_cells = hit_world_y / block_size as f32;
-        let hxi = (x as f32 + hx_cells * csx as f32) as i32;
-        let hyi = (y as f32 + hy_cells * csy as f32) as i32;
+        let mut hx = hx_cells;
+        let mut hy = hy_cells;
+        // clamp a la ventana para que la línea no se salga
+        if hx < start_i_f { hx = start_i_f; }
+        if hy < start_j_f { hy = start_j_f; }
+        if hx > start_i_f + vw as f32 { hx = start_i_f + vw as f32; }
+        if hy > start_j_f + vh as f32 { hy = start_j_f + vh as f32; }
 
+        let (hxi, hyi) = to_px(hx, hy);
         draw_line(fb, pxi, pyi, hxi, hyi, style.fov_ray);
     }
 
-    // Enemigos
+    // Enemigos (solo los que caen dentro de la ventana)
     for e in enemies {
         let ex = e.pos.x / block_size as f32;
         let ey = e.pos.y / block_size as f32;
-        let exi = (x as f32 + ex * csx as f32) as i32;
-        let eyi = (y as f32 + ey * csy as f32) as i32;
-        draw_disc(fb, exi, eyi, (csx.min(csy) / 3).max(2), style.enemy);
+        if ex >= start_i_f && ex <= start_i_f + vw as f32 &&
+           ey >= start_j_f && ey <= start_j_f + vh as f32 {
+            let (exi, eyi) = to_px(ex, ey);
+            draw_disc(fb, exi, eyi, pr, style.enemy);
+        }
     }
 
-    // Línea de dirección del player
-    let dir_len = (csx.min(csy) * 2).max(8) as f32;
+    // Dirección del player
+    let dir_len = (cell_px * 2).max(8) as f32;
     let dx = player.a.cos() * dir_len;
     let dy = player.a.sin() * dir_len;
-    draw_line(fb, pxi, pyi, (pxi as f32 + dx) as i32, (pyi as f32 + dy) as i32, style.dir_line);
+    let (dxi, dyi) = to_px(pcx + dx / (block_size as f32), pcy + dy / (block_size as f32));
+    draw_line(fb, pxi, pyi, dxi, dyi, style.dir_line);
 }
 
 // Utilidades
