@@ -10,7 +10,8 @@ mod maze_gen;
 mod sprites;
 mod enemy;
 mod utils_grid;
-mod gamemanager; // 👈 nuevo
+mod gamemanager;
+mod hud; // 👈 nuevo
 
 use raylib::prelude::*;
 use raylib::consts::TextureFilter;
@@ -18,13 +19,13 @@ use raylib::consts::TextureFilter;
 use framebuffer::Framebuffer;
 use maze::{load_maze, find_char, maze_dims, Maze};
 use player::Player;
-use renderer::render_maze;
-use controller::process_events;
+use renderer::{render_maze}; // render_minimap lo usa hud.rs
 use world3d::{render_world_textured, draw_overlay_fullscreen, draw_game_over_background};
 use textures::TextureManager;
 use sprites::{collect_sprites, Sprite};
 use enemy::{Enemy, update_enemy};
 use gamemanager::{GameManager, GameState};
+use hud::Hud;
 
 fn recreate_enemies(cells: &[(i32,i32)], block_size: usize) -> Vec<Enemy> {
     let mut v = Vec::with_capacity(cells.len());
@@ -37,12 +38,15 @@ fn recreate_enemies(cells: &[(i32,i32)], block_size: usize) -> Vec<Enemy> {
 fn main() {
     let screen_w = 1000;
     let screen_h = 800;
-    let (mut rl, thread) = raylib::init().size(screen_w, screen_h).title("Raycasting con enemigos").build();
+    let (mut rl, thread) = raylib::init()
+        .size(screen_w, screen_h)
+        .title("Raycasting con enemigos + HUD")
+        .build();
 
     let mut framebuffer = Framebuffer::new(screen_w, screen_h, Color::BLACK);
     let tex_manager = TextureManager::new(&mut rl, &thread);
 
-    // --- Maze base (inmutable en disco)
+    // --- Maze base ---
     let mut maze: Maze = load_maze("assets/maze.txt");
 
     let (mw, mh) = maze_dims(&maze);
@@ -82,27 +86,28 @@ fn main() {
         player_spawn_fov,
     );
     let mut enemies: Vec<Enemy> = recreate_enemies(&enemy_spawn_cells, block_size);
-
-    // (Opcional: sprites decorativos si los usas)
     let sprites: Vec<Sprite> = collect_sprites(&maze, block_size, &tex_manager);
 
-    let mut mode_3d = true;
-
-    let mut screen_tex = rl.load_texture_from_image(&thread, &framebuffer.color_buffer)
+    let mut screen_tex = rl
+        .load_texture_from_image(&thread, &framebuffer.color_buffer)
         .expect("No se pudo crear la textura de pantalla");
     screen_tex.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
     let mut time_s: f32 = 0.0;
 
     // Game Manager
-    let trigger_dist = (block_size as f32) * 0.65;
+    let trigger_dist = (block_size as f32) * 0.85;
     let mut gm = GameManager::new(trigger_dist, 2.0);
+
+    // HUD
+    let mut hud = Hud::new(&tex_manager);
 
     // --- función inline para RESET total ---
     let mut do_reset = |player: &mut Player,
                         enemies: &mut Vec<Enemy>,
                         gm: &mut GameManager,
-                        time_s: &mut f32| {
+                        time_s: &mut f32,
+                        hud: &mut Hud| {
         // Player
         player.pos.x = player_spawn_px.0;
         player.pos.y = player_spawn_px.1;
@@ -115,23 +120,25 @@ fn main() {
         // Tiempo y estados
         *time_s = 0.0;
         gm.reset();
+
+        // HUD timers
+        hud.face_playing = false;
+        hud.face_time = 0.0;
+        hud.face_cooldown = 1.5;
     };
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
         time_s += dt;
 
-        // Toggle modo solo si jugando
-        if gm.is_playing() && rl.is_key_pressed(KeyboardKey::KEY_M) { mode_3d = !mode_3d; }
-
-        // RESET si estás en GameOver y presionas R (o si prefieres permitirlo siempre)
+        // RESET si estás en GameOver y presionas R
         if gm.is_game_over() && rl.is_key_pressed(KeyboardKey::KEY_R) {
-            do_reset(&mut player, &mut enemies, &mut gm, &mut time_s);
+            do_reset(&mut player, &mut enemies, &mut gm, &mut time_s, &mut hud);
         }
 
         // Input + lógica de enemigo solo en Playing
         if gm.is_playing() {
-            process_events(&rl, &mut player);
+            controller::process_events(&rl, &mut player);
             for e in &mut enemies { update_enemy(e, &maze, player.pos, block_size, dt); }
         }
 
@@ -139,28 +146,36 @@ fn main() {
         let enemy_positions = enemies.iter().map(|e| e.pos);
         gm.update(player.pos, enemy_positions, dt);
 
-        // --- Render ---
-        if mode_3d {
-            match gm.state {
-                GameState::Playing => {
-                    render_world_textured(&mut framebuffer,&maze,&player,block_size,&tex_manager,&sprites,&enemies,time_s);
-                }
-                GameState::JumpScare => {
-                    render_world_textured(&mut framebuffer,&maze,&player,block_size,&tex_manager,&sprites,&[],time_s);
-                    draw_overlay_fullscreen(&mut framebuffer, &tex_manager, 'j');
-                }
-                GameState::GameOver => {
-                    draw_game_over_background(&mut framebuffer);
-                }
-            }
-        } else {
-            framebuffer.clear();
-            render_maze(&mut framebuffer, &maze, block_size);
+        // Update HUD timers (independiente del estado; opcional detener en game over)
+        if gm.is_playing() {
+            hud.update(dt);
         }
 
+        // --- Render 3D de mundo ---
+        match gm.state {
+            GameState::Playing => {
+                render_world_textured(&mut framebuffer,&maze,&player,block_size,&tex_manager,&sprites,&enemies,time_s);
+                // HUD encima del mundo
+                hud.render(&mut framebuffer, &tex_manager, &maze, &player, &enemies, block_size);
+            }
+            GameState::JumpScare => {
+                render_world_textured(&mut framebuffer,&maze,&player,block_size,&tex_manager,&sprites,&[],time_s);
+                // Aunque HUD ya fue dibujado en Playing, el JumpScare debe cubrir TODO:
+                hud.render(&mut framebuffer, &tex_manager, &maze, &player, &enemies, block_size);
+                world3d::draw_overlay_fullscreen(&mut framebuffer, &tex_manager, 'j');
+            }
+            GameState::GameOver => {
+                draw_game_over_background(&mut framebuffer);
+            }
+        }
+
+        // Sube framebuffer a textura de pantalla
         unsafe {
             let len = (framebuffer.width * framebuffer.height * 4) as usize;
-            let slice = std::slice::from_raw_parts(framebuffer.color_buffer.data as *const u8, len);
+            let slice = std::slice::from_raw_parts(
+                framebuffer.color_buffer.data as *const u8,
+                len,
+            );
             screen_tex.update_texture(slice).unwrap();
         }
 
@@ -168,12 +183,12 @@ fn main() {
         d.clear_background(Color::BLACK);
         d.draw_texture(&screen_tex, 0, 0, Color::WHITE);
 
+        // HUD textual mínimo (ayuda/control)
         match gm.state {
             GameState::Playing => {
-                d.draw_text("R: Reset", 10, 34, 18, Color::RAYWHITE);
-                d.draw_text(if mode_3d {"M: 2D | Texturas+Sprites+Enemigos ON"} else {"M: 3D | WASD/Flechas"}, 10, 10, 18, Color::RAYWHITE);
+                d.draw_text("R: Reset", 10, 10, 18, Color::RAYWHITE);
             }
-            GameState::JumpScare => { /* Overlay tapa todo */ }
+            GameState::JumpScare => { /* overlay tapa todo */ }
             GameState::GameOver => {
                 let text = "GAME OVER";
                 let font_size = 100;

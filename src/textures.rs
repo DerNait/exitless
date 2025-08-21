@@ -23,8 +23,10 @@ impl TextureManager {
             ('|', "assets/wall1.png"),
             ('g', "assets/wall5.png"),
             ('#', "assets/wall3.png"),
-            ('e', "assets/enemy1.png"), // spritesheet 4x2 (512x256 => frames 128x128)
-            ('j', "assets/jumpscare1.png"),  // overlay para el jumpscare (recomendado con alpha o fondo negro)
+            ('e', "assets/enemy1.png"),    // spritesheet 4x2 (ejemplo)
+            ('j', "assets/jumpscare1.png"),
+            ('h', "assets/hud_bg.png"),    // fondo HUD
+            ('f', "assets/face.png"),      // cara protagonista (spritesheet)
         ];
 
         for (ch, path) in texture_files {
@@ -43,11 +45,18 @@ impl TextureManager {
             pixels.insert(ch, TexturePixels { w, h, data });
         }
 
-        // Registra layouts de spritesheets
         let mut sheets = HashMap::new();
+
+        // Enemy 'e' (ajusta cols/rows a tu asset real)
         if let Some(p) = pixels.get(&'e') {
-            let cols = 4; let rows = 2; // <- AJUSTA AQUÍ si cambias tu hoja
+            let cols = 4; let rows = 2;
             sheets.insert('e', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
+        }
+
+        // Face 'f' (ajusta a tu spritesheet real)
+        if let Some(p) = pixels.get(&'f') {
+            let cols = 4; let rows = 2; // ejemplo 4x2
+            sheets.insert('f', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
         }
 
         Self { pixels, _textures: textures, sheets }
