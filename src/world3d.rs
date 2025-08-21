@@ -19,27 +19,48 @@ fn sky_floor_region(fb: &mut Framebuffer, y0: i32, vh: i32) {
     }
 }
 
-/// Dibuja una imagen completa a pantalla (overlay)
+/// Overlay en pantalla completa (se mantiene por compatibilidad)
 pub fn draw_overlay_fullscreen(fb: &mut Framebuffer, tex: &TextureManager, key: char) {
+    draw_overlay_viewport(fb, tex, key, 0, 0, fb.width, fb.height);
+}
+
+/// ⬅️ NUEVO: Overlay limitado a un rectángulo (viewport 3D)
+pub fn draw_overlay_viewport(
+    fb: &mut Framebuffer,
+    tex: &TextureManager,
+    key: char,
+    x: i32,        // origen X del rect
+    y: i32,        // origen Y del rect
+    w: i32,        // ancho del rect
+    h: i32,        // alto del rect
+) {
     let (src_w, src_h, data) = tex.tex_view(key);
-    if src_w == 0 || src_h == 0 { return; }
+    if src_w == 0 || src_h == 0 || w <= 0 || h <= 0 { return; }
 
-    let dst_w = fb.width as i32;
-    let dst_h = fb.height as i32;
+    // Clampeo básico a los límites del framebuffer
+    let max_x = (x + w).min(fb.width);
+    let max_y = (y + h).min(fb.height);
+    let start_x = x.max(0);
+    let start_y = y.max(0);
+    let dst_w = max_x - start_x;
+    let dst_h = max_y - start_y;
+    if dst_w <= 0 || dst_h <= 0 { return; }
 
-    for y in 0..dst_h {
-        let sy = ((y as f32 / dst_h as f32) * src_h as f32).floor() as i32;
+    for yy in 0..dst_h {
+        // Mapeo nearest al origen del rectángulo
+        let sy = (((yy as f32) / (h as f32)) * (src_h as f32)).floor() as i32;
         let sy = sy.clamp(0, src_h as i32 - 1);
-        for x in 0..dst_w {
-            let sx = ((x as f32 / dst_w as f32) * src_w as f32).floor() as i32;
+        for xx in 0..dst_w {
+            let sx = (((xx as f32) / (w as f32)) * (src_w as f32)).floor() as i32;
             let sx = sx.clamp(0, src_w as i32 - 1);
+
             let idx = (((sy as usize) * src_w) + (sx as usize)) * 4;
             let r = data[idx];
             let g = data[idx + 1];
             let b = data[idx + 2];
             let a = data[idx + 3];
             if a > 0 {
-                fb.put_pixel_rgba(x, y, r, g, b, a);
+                fb.put_pixel_rgba(start_x + xx, start_y + yy, r, g, b, a);
             }
         }
     }
@@ -128,7 +149,7 @@ pub fn render_world_textured(
         }
     }
 
-    // Sprites decorativos (si tienes)
+    // Sprites decorativos
     render_sprites(fb, player, sprites, tex, &zbuf, block_size, time_s, y_off, h);
 
     // Enemigos como sprites animados dinámicos

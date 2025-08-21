@@ -151,20 +151,18 @@ fn main() {
             }
             GameState::JumpScare => {
                 render_world_textured(
-                    &mut framebuffer,
-                    &maze,
-                    &player,
-                    block_size,
-                    &tex_manager,
-                    &sprites,
-                    &[], // sin enemigos
-                    time_s,
-                    vp_y0,
-                    vp_h,
+                    &mut framebuffer,&maze,&player,block_size,&tex_manager,&sprites,&[],time_s,
+                    vp_y0, vp_h,
+                );
+                let fb_w = framebuffer.width;
+                // Overlay SOLO en el viewport 3D → no cubre el HUD
+                world3d::draw_overlay_viewport(
+                    &mut framebuffer, &tex_manager, 'j',
+                    0, vp_y0, fb_w, vp_h
                 );
                 hud.render(&mut framebuffer, &tex_manager, &maze, &player, &enemies, block_size);
-                world3d::draw_overlay_fullscreen(&mut framebuffer, &tex_manager, 'j');
             }
+
             GameState::GameOver => {
                 draw_game_over_background(&mut framebuffer);
             }
@@ -196,7 +194,7 @@ fn main() {
                 let y = (screen_h - font_size) / 2;
                 d.draw_text(text, x, y, font_size, Color::RED);
 
-                let sub = "Presiona R para reiniciar • ESC para salir";
+                let sub = "Presiona R para reiniciar - ESC para salir";
                 let sub_size = 24;
                 let sw = d.measure_text(sub, sub_size);
                 let sx = (screen_w - sw) / 2;
