@@ -24,6 +24,7 @@ impl TextureManager {
             ('g', "assets/wall5.png"),
             ('#', "assets/wall3.png"),
             ('e', "assets/enemy1.png"), // spritesheet 4x2 (512x256 => frames 128x128)
+            ('j', "assets/jumpscare1.png"),  // overlay para el jumpscare (recomendado con alpha o fondo negro)
         ];
 
         for (ch, path) in texture_files {
