@@ -47,6 +47,9 @@ impl TextureManager {
 
             // 🚪 Puerta de salida
             ('G', "assets/door_exit.png"),
+
+            // ⬅️ dígitos 0..9 (10x1)
+            ('n', "assets/fps_digits.png"),
         ];
 
         for (ch, path) in texture_files {
@@ -93,6 +96,11 @@ impl TextureManager {
             sheets.insert('3', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
         }
 
+        // FPS digits 'n' (10 columnas: 0..9)
+        if let Some(p) = pixels.get(&'n') {
+            let cols = 10; let rows = 1;
+            sheets.insert('n', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
+        }
 
         Self { pixels, _textures: textures, sheets }
     }

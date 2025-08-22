@@ -13,26 +13,26 @@ use crate::sprites::Sprite;
 #[derive(Clone, Copy)]
 pub enum KeySlotsDirection { Row, Column }
 
-/// Esquina de anclaje del contenedor de llaves
+/// Esquina/ancla reutilizable
 #[derive(Clone, Copy)]
 pub enum KeySlotsAnchor {
     BottomRight,
     BottomLeft,
     TopRight,
     TopLeft,
-    /// Coordenadas absolutas (x,y) del *contenedor* relativo a la pantalla
+    /// Coordenadas absolutas (x,y) relativas a la pantalla
     Custom { x: i32, y: i32 },
 }
 
-/// Estilo visual del contenedor/slots (se mantiene para compat),
-/// pero NO se dibuja nada (todo transparente).
+/// Estilo visual del contenedor/slots (compat),
+/// para las llaves dejamos todo transparente: sólo sprites.
 #[derive(Clone, Copy)]
 pub struct KeySlotsStyle {
     pub container_bg: (u8,u8,u8,u8), // ignorado (transparente)
     pub slot_bg:      (u8,u8,u8,u8), // ignorado (transparente)
     pub border:       (u8,u8,u8,u8), // ignorado
     pub border_px:    i32,           // ignorado
-    pub icon_inset:   i32,           // margen interno del icono dentro del slot
+    pub icon_inset:   i32,           // margen interno del icono
 }
 
 /// Configuración del contenedor de llaves (posicionamiento y layout)
@@ -51,7 +51,23 @@ pub struct KeySlotsConfig {
     pub order: [char; 3],
 }
 
-/// HUD de 128px, textura de fondo 'h', cara 'f', minimapa y llaves transparentes.
+/// Configuración para los dígitos FPS (posición/tamaño/espaciado)
+#[derive(Clone, Copy)]
+pub struct FpsDigitsConfig {
+    pub digit_w: i32,         // ancho de cada dígito en pantalla
+    pub digit_h: i32,         // alto de cada dígito en pantalla
+    pub gap: i32,             // separación entre dígitos
+    pub max_digits: usize,    // reserva (típicamente 3: 0..999)
+    pub anchor: KeySlotsAnchor, // esquina/ancla
+    pub pad: i32,             // margen desde la esquina del HUD
+    pub offset_x: i32,        // ajuste fino X
+    pub offset_y: i32,        // ajuste fino Y
+    /// Si true, el número se alinea a la derecha dentro del rect reservado
+    /// (útil para que las unidades queden fijas aunque cambie el ancho)
+    pub align_right: bool,
+}
+
+/// HUD de 128px, textura de fondo 'h', cara 'f', minimapa, llaves y FPS.
 pub struct Hud {
     pub height: i32,          // px
     pub face_playing: bool,
@@ -69,8 +85,17 @@ pub struct Hud {
     pub minimap_cells_w: i32,
     pub minimap_cells_h: i32,
 
-    /// Config de llaves (solo sprites con alpha, sin fondos)
+    /// Llaves (solo sprites con alpha, sin fondos)
     pub key_cfg: KeySlotsConfig,
+
+    /// FPS digits config
+    pub fps_cfg: FpsDigitsConfig,
+
+    // --- Estado interno para FPS (suavizado/refresh) ---
+    fps_accum_time: f32,
+    fps_accum_frames: u32,
+    fps_display: u32,
+    fps_refresh: f32, // cada cuánto (seg) actualizar fps_display
 }
 
 impl Hud {
@@ -92,29 +117,50 @@ impl Hud {
             minimap_cells_w: 11,
             minimap_cells_h: 9,
 
-            // 🎛️ KeySlotsConfig: solo sprites transparentes (sin placa/fondo/borde)
+            // Llaves: solo sprites transparentes (sin placa/fondo/borde)
             key_cfg: KeySlotsConfig {
-                slot: 100,     // tamaño del icono (px)
+                slot: 100,
                 gap: 8,
                 pad: 8,
-                container_pad: 0, // ignorado
+                container_pad: 0,
                 dir: KeySlotsDirection::Row,
                 anchor: KeySlotsAnchor::BottomRight,
                 offset_x: -20,
                 offset_y: 0,
                 style: KeySlotsStyle {
-                    container_bg: (0, 0, 0, 0), // transparente
-                    slot_bg:      (0, 0, 0, 0), // transparente
-                    border:       (0, 0, 0, 0), // transparente
+                    container_bg: (0, 0, 0, 0),
+                    slot_bg:      (0, 0, 0, 0),
+                    border:       (0, 0, 0, 0),
                     border_px:    0,
-                    icon_inset:   0,            // icono a tamaño completo del slot
+                    icon_inset:   0,
                 },
                 order: ['y', 'b', 'r'],
             },
+
+            // FPS: 3 dígitos, arriba-derecha por defecto (tú lo ajustas)
+            fps_cfg: FpsDigitsConfig {
+                digit_w: 62,
+                digit_h: 62,
+                gap: 2,
+                max_digits: 3,
+                anchor: KeySlotsAnchor::TopRight,
+                pad: 10,
+                offset_x: -626, // ej: un pequeño ajuste para “colar” con tu HUD
+                offset_y: 6,
+                align_right: true,
+            },
+
+            // estado FPS
+            fps_accum_time: 0.0,
+            fps_accum_frames: 0,
+            fps_display: 0,
+            fps_refresh: 0.25, // refresco 4Hz (suavizado)
         }
     }
 
+    /// Llama siempre cada frame (aunque no estés en Playing) para refrescar FPS.
     pub fn update(&mut self, dt: f32) {
+        // Cara anim
         if self.face_playing {
             self.face_time += dt;
             let total_anim = (self.face_frames as f32) / self.face_fps;
@@ -130,6 +176,20 @@ impl Hud {
                 self.face_playing = true;
                 self.face_time = 0.0;
             }
+        }
+
+        // FPS acumulado y refresco temporal
+        self.fps_accum_time += dt;
+        self.fps_accum_frames += 1;
+
+        if self.fps_accum_time >= self.fps_refresh {
+            // promedio por ventana → FPS “suavizado”
+            let avg_dt = (self.fps_accum_time / (self.fps_accum_frames as f32)).max(1e-6);
+            let fps = (1.0 / avg_dt).round();
+            self.fps_display = fps.max(0.0) as u32;
+
+            self.fps_accum_time = 0.0;
+            self.fps_accum_frames = 0;
         }
     }
 
@@ -167,37 +227,29 @@ impl Hud {
             blit_sheet_frame_to_rect(fb, tex, 'f', frame_idx, dst_x, dst_y, dst_w, dst_h);
         }
 
-        // 3) Mini-mapa (abajo-izquierda, por defecto)
+        // 3) Mini-mapa (abajo-izquierda)
         let pad = 6;
         let mm_h = (self.height - pad * 2).max(1);
-        let mm_w = (mm_h as f32 * 1.25) as i32; // un pelín ancho
+        let mm_w = (mm_h as f32 * 1.25) as i32;
         let mm_x = pad;
         let mm_y = y0 + pad;
 
-        // Borde/fondo del minimapa (mantiene el frame)
         fill_rect(fb, mm_x - 2, mm_y - 2, mm_w + 4, mm_h + 4, self.minimap_style.frame);
 
         crate::renderer::render_minimap_zoomed(
-            fb,
-            maze,
-            player,
-            enemies,
-            keys_sprites,
-            block_size,
-            mm_x,
-            mm_y,
-            mm_w,
-            mm_h,
-            self.minimap_cells_w,
-            self.minimap_cells_h,
-            &self.minimap_style,
+            fb, maze, player, enemies, keys_sprites,
+            block_size, mm_x, mm_y, mm_w, mm_h,
+            self.minimap_cells_w, self.minimap_cells_h, &self.minimap_style,
         );
 
-        // 4) Llaves transparentes (solo sprites con alpha)
+        // 4) Llaves (solo sprites con alpha + blending)
         self.render_key_icons_only(fb, tex, player, w, y0);
+
+        // 5) FPS (dígitos desde spritesheet 'n' 0..9; sólo números)
+        self.render_fps_digits(fb, tex, w, y0);
     }
 
-    /// Dibuja ÚNICAMENTE los sprites de las llaves presentes (sin placa/fondo/bordes).
+    /// Llaves: ÚNICAMENTE los sprites de las llaves presentes (alpha blending).
     fn render_key_icons_only(
         &self,
         fb: &mut Framebuffer,
@@ -213,14 +265,12 @@ impl Hud {
         let pad  = cfg.pad.max(0);
         let inset = cfg.style.icon_inset.clamp(0, slot / 3);
 
-        // Dimensiones del contenido (3 posiciones, aunque no se dibuje nada si no hay llave)
         let n = 3;
         let (content_w, content_h) = match cfg.dir {
             KeySlotsDirection::Row    => (slot * n + gap * (n - 1), slot),
             KeySlotsDirection::Column => (slot,         slot * n + gap * (n - 1)),
         };
 
-        // Posición base del contenido según ancla
         let (mut sx0, mut sy0) = match cfg.anchor {
             KeySlotsAnchor::BottomRight => (
                 screen_w - pad - content_w,
@@ -244,7 +294,6 @@ impl Hud {
         sx0 += cfg.offset_x;
         sy0 += cfg.offset_y;
 
-        // Recorremos las 3 posiciones; sólo dibujamos el sprite si el jugador tiene esa llave
         for (idx, key_ch) in cfg.order.iter().enumerate() {
             let (x, y) = match cfg.dir {
                 KeySlotsDirection::Row    => (sx0 + idx as i32 * (slot + gap), sy0),
@@ -259,20 +308,101 @@ impl Hud {
             };
 
             if has_key {
-                blit_image_to_rect(
+                blit_image_to_rect_over(
                     fb, tex, *key_ch,
                     x + inset, y + inset,
                     slot - inset * 2, slot - inset * 2
                 );
             }
-            // Si no tiene la llave → no se dibuja nada (totalmente transparente)
+        }
+    }
+
+    /// FPS: dibuja los dígitos usando spritesheet 'n' (10 frames 0..9),
+    /// con alpha blending y posición configurable.
+    fn render_fps_digits(
+        &self,
+        fb: &mut Framebuffer,
+        tex: &TextureManager,
+        screen_w: i32,
+        hud_y0: i32,
+    ) {
+        let cfg = self.fps_cfg;
+
+        // Número mostrado y dígitos
+        let mut fps = self.fps_display.min(999); // max 3 dígitos
+        let mut digits: [u8; 3] = [0,0,0];
+        let mut count = 0usize;
+
+        // Al menos un dígito
+        if fps == 0 {
+            digits[0] = 0; count = 1;
+        } else {
+            while fps > 0 && count < digits.len() {
+                digits[count] = (fps % 10) as u8;
+                fps /= 10;
+                count += 1;
+            }
+            // invertir (ahora están al revés)
+            digits[..count].reverse();
+        }
+
+        // Medidas
+        let dw = cfg.digit_w.max(1);
+        let dh = cfg.digit_h.max(1);
+        let gap = cfg.gap.max(0);
+        let total_w = (count as i32) * dw + (count.saturating_sub(1) as i32) * gap;
+        let total_h = dh;
+
+        // Rectángulo reservado (según max_digits)
+        let res_w = (cfg.max_digits as i32) * dw + ((cfg.max_digits.saturating_sub(1)) as i32) * gap;
+        let res_h = dh;
+
+        // Punto base por anchor (usamos el rectángulo reservado para que no "salte")
+        let (mut base_x, mut base_y) = match cfg.anchor {
+            KeySlotsAnchor::BottomRight => (
+                screen_w - cfg.pad - res_w,
+                hud_y0 + self.height - cfg.pad - res_h
+            ),
+            KeySlotsAnchor::BottomLeft => (
+                cfg.pad,
+                hud_y0 + self.height - cfg.pad - res_h
+            ),
+            KeySlotsAnchor::TopRight => (
+                screen_w - cfg.pad - res_w,
+                hud_y0 + cfg.pad
+            ),
+            KeySlotsAnchor::TopLeft => (
+                cfg.pad,
+                hud_y0 + cfg.pad
+            ),
+            KeySlotsAnchor::Custom { x, y } => (x, y),
+        };
+
+        base_x += cfg.offset_x;
+        base_y += cfg.offset_y;
+
+        // Alineación interna
+        let start_x = if cfg.align_right {
+            base_x + (res_w - total_w)
+        } else {
+            base_x
+        };
+        let start_y = base_y;
+
+        // Pintar cada dígito (sheet 'n', frame = dígito 0..9) con blending
+        for i in 0..count {
+            let dx = start_x + i as i32 * (dw + gap);
+            blit_sheet_frame_to_rect_over(fb, tex, 'n', digits[i] as usize, dx, start_y, dw, dh);
         }
     }
 }
 
-// Helpers de blit/fill que ya usábamos en el HUD
+// -----------------------------------------------------------------------------
+// Helpers de blit/fill (+ alpha blending)
+// -----------------------------------------------------------------------------
 
-pub fn blit_image_to_rect(
+/// Copia una imagen a rectángulo con alpha BLENDING (source-over) sobre el framebuffer.
+pub fn blit_image_to_rect_over(
     fb: &mut Framebuffer,
     tex: &TextureManager,
     key: char,
@@ -285,6 +415,108 @@ pub fn blit_image_to_rect(
     if sw == 0 || sh == 0 || dw <= 0 || dh <= 0 {
         return;
     }
+
+    for y in 0..dh {
+        let sy = ((y as f32 / dh as f32) * sh as f32).floor() as i32;
+        let sy = sy.clamp(0, sh as i32 - 1);
+        for x in 0..dw {
+            let sx = ((x as f32 / dw as f32) * sw as f32).floor() as i32;
+            let sx = sx.clamp(0, sw as i32 - 1);
+            let idx = (((sy as usize) * sw) + (sx as usize)) * 4;
+
+            let sr = data[idx];
+            let sg = data[idx + 1];
+            let sb = data[idx + 2];
+            let sa = data[idx + 3];
+            put_pixel_rgba_over(fb, dx + x, dy + y, sr, sg, sb, sa);
+        }
+    }
+}
+
+/// Copia un frame de spritesheet con alpha BLENDING (source-over).
+pub fn blit_sheet_frame_to_rect_over(
+    fb: &mut Framebuffer,
+    tex: &TextureManager,
+    key: char,
+    frame: usize,
+    dx: i32,
+    dy: i32,
+    dw: i32,
+    dh: i32,
+) {
+    let (tw, th, x0, y0, fw, fh, data) = tex.sheet_frame_view(key, frame);
+    if fw == 0 || fh == 0 || dw <= 0 || dh <= 0 {
+        return;
+    }
+
+    for y in 0..dh {
+        let sy = ((y as f32 / dh as f32) * fh as f32).floor() as i32;
+        let sy = sy.clamp(0, fh as i32 - 1);
+        for x in 0..dw {
+            let sx = ((x as f32 / dw as f32) * fw as f32).floor() as i32;
+            let sx = sx.clamp(0, fw as i32 - 1);
+            let px = x0 as i32 + sx;
+            let py = y0 as i32 + sy;
+            let idx = (((py as usize) * tw) + (px as usize)) * 4;
+
+            let sr = data[idx];
+            let sg = data[idx + 1];
+            let sb = data[idx + 2];
+            let sa = data[idx + 3];
+            put_pixel_rgba_over(fb, dx + x, dy + y, sr, sg, sb, sa);
+        }
+    }
+}
+
+/// Alpha blending (source-over) de un píxel RGBA sobre el framebuffer.
+/// out_rgb = src_rgb * a + dst_rgb * (1-a)
+/// out_a   = 255 (buffer final opaco)
+#[inline]
+pub fn put_pixel_rgba_over(
+    fb: &mut Framebuffer,
+    x: i32,
+    y: i32,
+    sr: u8,
+    sg: u8,
+    sb: u8,
+    sa: u8,
+) {
+    if x < 0 || y < 0 || x >= fb.width || y >= fb.height { return; }
+
+    let idx = ((y as usize * fb.width as usize) + x as usize) * 4;
+    unsafe {
+        let base = fb.color_buffer.data as *mut u8;
+
+        let dr = *base.add(idx);
+        let dg = *base.add(idx + 1);
+        let db = *base.add(idx + 2);
+
+        let a  = sa as u32;
+        let ia = 255u32 - a;
+
+        let rr = ((sr as u32 * a + dr as u32 * ia) / 255) as u8;
+        let gg = ((sg as u32 * a + dg as u32 * ia) / 255) as u8;
+        let bb = ((sb as u32 * a + db as u32 * ia) / 255) as u8;
+
+        *base.add(idx)     = rr;
+        *base.add(idx + 1) = gg;
+        *base.add(idx + 2) = bb;
+        *base.add(idx + 3) = 255;
+    }
+}
+
+// (helpers sin blending, por compat)
+pub fn blit_image_to_rect(
+    fb: &mut Framebuffer,
+    tex: &TextureManager,
+    key: char,
+    dx: i32,
+    dy: i32,
+    dw: i32,
+    dh: i32,
+) {
+    let (sw, sh, data) = tex.tex_view(key);
+    if sw == 0 || sh == 0 || dw <= 0 || dh <= 0 { return; }
 
     for y in 0..dh {
         let sy = ((y as f32 / dh as f32) * sh as f32).floor() as i32;
@@ -313,15 +545,13 @@ pub fn blit_sheet_frame_to_rect(
     dh: i32,
 ) {
     let (tw, th, x0, y0, fw, fh, data) = tex.sheet_frame_view(key, frame);
-    if fw == 0 || fh == 0 || dw <= 0 || dh <= 0 {
-        return;
-    }
+    if fw == 0 || fh == 0 || dw <= 0 || dh <= 0 { return; }
 
     for y in 0..dh {
         let sy = ((y as f32 / dh as f32) * fh as f32).floor() as i32;
         let sy = sy.clamp(0, fh as i32 - 1);
         for x in 0..dw {
-            let sx = ((x as f32 / dh as f32) * fw as f32).floor() as i32;
+            let sx = ((x as f32 / dw as f32) * fw as f32).floor() as i32;
             let sx = sx.clamp(0, fw as i32 - 1);
             let px = x0 as i32 + sx;
             let py = y0 as i32 + sy;
