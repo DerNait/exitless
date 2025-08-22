@@ -23,10 +23,26 @@ impl TextureManager {
             ('|', "assets/wall1.png"),
             ('g', "assets/wall5.png"),
             ('#', "assets/wall3.png"),
-            ('e', "assets/enemy1.png"),    // spritesheet 4x2 (ejemplo)
+
+            // 🧟 Sprite/enemy & overlays/HUD
+            ('e', "assets/enemy1.png"),
             ('j', "assets/jumpscare1.png"),
-            ('h', "assets/hud_bg.png"),    // fondo HUD
-            ('f', "assets/face.png"),      // cara protagonista (spritesheet)
+            ('h', "assets/hud_bg.png"),
+            ('f', "assets/face.png"),
+
+            // 🔑 Llaves (sprite o spritesheet)
+            // '1' = amarilla, '2' = azul, '3' = roja
+            ('1', "assets/keys1.png"),
+            ('2', "assets/keys2.png"),
+            ('3', "assets/keys3.png"),
+
+            // 🚪 Puertas de color (paredes texturizadas)
+            ('Y', "assets/door_yellow.png"),
+            ('B', "assets/door_blue.png"),
+            ('R', "assets/door_red.png"),
+
+            // 🚪 Puerta de salida (requiere las tres llaves)
+            ('G', "assets/door_exit.png"),
         ];
 
         for (ch, path) in texture_files {
@@ -58,6 +74,21 @@ impl TextureManager {
             let cols = 4; let rows = 2; // ejemplo 4x2
             sheets.insert('f', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
         }
+
+        // Keys '1','2','3' (AJUSTA cols/rows a tu spritesheet)
+        if let Some(p) = pixels.get(&'1') {
+            let cols = 4; let rows = 2; // <-- cambia si tu hoja es distinta
+            sheets.insert('1', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
+        }
+        if let Some(p) = pixels.get(&'2') {
+            let cols = 4; let rows = 2; // <-- cambia si tu hoja es distinta
+            sheets.insert('2', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
+        }
+        if let Some(p) = pixels.get(&'3') {
+            let cols = 4; let rows = 2; // <-- cambia si tu hoja es distinta
+            sheets.insert('3', TexSheet { cols, rows, frame_w: p.w / cols, frame_h: p.h / rows });
+        }
+
 
         Self { pixels, _textures: textures, sheets }
     }

@@ -3,6 +3,7 @@ use crate::framebuffer::Framebuffer;
 use crate::maze::Maze;
 use crate::player::Player;
 use crate::enemy::Enemy;
+use crate::sprites::Sprite; // ⬅️ para dibujar llaves
 use crate::caster::{cast_ray, Intersect};
 
 /// Colores configurables del minimapa (RGBA en u8).
@@ -16,6 +17,11 @@ pub struct MinimapColors {
     pub dir_line: (u8,u8,u8,u8),
     pub fov_ray:  (u8,u8,u8,u8),
     pub frame:    (u8,u8,u8,u8),
+
+    // ⬇️ NUEVO: colores para cada llave
+    pub key_y:    (u8,u8,u8,u8),
+    pub key_b:    (u8,u8,u8,u8),
+    pub key_r:    (u8,u8,u8,u8),
 }
 
 impl Default for MinimapColors {
@@ -29,6 +35,10 @@ impl Default for MinimapColors {
             dir_line: (180, 255, 180, 255),
             fov_ray:  (110, 160, 255, 160), // semitransparente
             frame:    (0,   0,   0,   160), // borde/fondo minimapa
+
+            key_y:    (255, 215, 0,   255), // amarillo
+            key_b:    (60,  130, 255, 255), // azul
+            key_r:    (235, 60,  60,  255), // rojo
         }
     }
 }
@@ -43,8 +53,10 @@ pub fn draw_cell(
     let color = match cell {
         '+' | '-' | '|' => Color::DARKGRAY,  // paredes
         'p' => Color::GREEN,                  // player start
-        'g' => Color::RED,                    // goal
+        'g' => Color::RED,                    // goal (legacy)
         'e' => Color::YELLOW,
+        // puertas también podrían mostrarse aquí si usas render_maze
+        'Y' | 'B' | 'R' | 'G' => Color::DARKGRAY,
         _   => Color::BLANK,                  // espacios
     };
     framebuffer.set_current_color(color);
@@ -73,12 +85,13 @@ pub fn render_maze(
 
 /// Mini-mapa “zoom cam” suave: ventana de `view_w_cells`×`view_h_cells`
 /// centrada en el jugador con **offset fraccionario** y clamped a bordes.
-/// Dibuja paredes/espacios por *pixel*, jugador, enemigos y rayos de visión.
+/// Dibuja paredes/espacios por *pixel*, jugador, enemigos, rayos y **llaves**.
 pub fn render_minimap_zoomed(
     fb: &mut Framebuffer,
     maze: &Maze,
     player: &Player,
     enemies: &[Enemy],
+    keys_sprites: &[Sprite],      // ⬅️ NUEVO: llaves
     block_size: usize,
     x: i32, y: i32, w: i32, h: i32,
     view_w_cells: i32,
@@ -98,7 +111,7 @@ pub fn render_minimap_zoomed(
     let pcx = player.pos.x / block_size as f32;
     let pcy = player.pos.y / block_size as f32;
 
-    // Origen fraccional de la ventana (clamp a bordes, ¡no redondeamos!)
+    // Origen fraccional de la ventana (clamp a bordes)
     let mut start_i_f = pcx - (vw as f32) * 0.5;
     let mut start_j_f = pcy - (vh as f32) * 0.5;
     let max_start_i_f = (cols - vw).max(0) as f32;
@@ -131,8 +144,9 @@ pub fn render_minimap_zoomed(
 
             let cell = maze[j as usize][i as usize];
             let (r,g,b,a) = match cell {
-                '+' | '-' | '|' | '#' => style.wall,
-                'g' => style.goal,
+                // ⬅️ Puertas como paredes
+                '+' | '-' | '|' | '#' | 'Y' | 'B' | 'R' | 'G' => style.wall,
+                'g' => style.goal, // (legacy)
                 _    => style.empty,
             };
             fb.put_pixel_rgba(x + xx, y + yy, r, g, b, a);
@@ -186,6 +200,25 @@ pub fn render_minimap_zoomed(
            ey >= start_j_f && ey <= start_j_f + vh as f32 {
             let (exi, eyi) = to_px(ex, ey);
             draw_disc(fb, exi, eyi, pr, style.enemy);
+        }
+    }
+
+    // ⬇️ NUEVO: Llaves (discos). Usamos su `Sprite.pos` actual.
+    for s in keys_sprites {
+        let kx = s.pos.x / block_size as f32;
+        let ky = s.pos.y / block_size as f32;
+        if kx >= start_i_f && kx <= start_i_f + vw as f32 &&
+           ky >= start_j_f && ky <= start_j_f + vh as f32 {
+            let (kxi, kyi) = to_px(kx, ky);
+            let color = match s.tex {
+                '1' => style.key_y, // amarilla
+                '2' => style.key_b, // azul
+                '3' => style.key_r, // roja
+                _   => style.empty,
+            };
+            // un pelín más pequeño que el player
+            let kr = (pr * 2 / 3).max(2);
+            draw_disc(fb, kxi, kyi, kr, color);
         }
     }
 

@@ -6,6 +6,7 @@ pub enum GameState {
     Playing,
     JumpScare,
     GameOver,
+    Win,
 }
 
 pub struct GameManager {
@@ -61,10 +62,14 @@ impl GameManager {
             GameState::GameOver => {
                 // (Opcional) Podrías escuchar una tecla para reiniciar aquí.
             }
+            GameState::Win => {
+                // (Opcional) Podrías escuchar una tecla para reiniciar aquí.
+            }
         }
     }
 
     pub fn is_playing(&self) -> bool { self.state == GameState::Playing }
     pub fn is_jumpscare(&self) -> bool { self.state == GameState::JumpScare }
     pub fn is_game_over(&self) -> bool { self.state == GameState::GameOver }
+    pub fn is_win(&self) -> bool { self.state == GameState::Win }
 }

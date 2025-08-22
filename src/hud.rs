@@ -7,6 +7,7 @@ use crate::renderer::{render_minimap_zoomed, MinimapColors};
 use crate::maze::Maze;
 use crate::player::Player;
 use crate::enemy::Enemy;
+use crate::sprites::Sprite;
 
 /// HUD de 128px, textura de fondo 'h', cara 'f' centrada y mini-mapa “zoom cam” con rayos.
 pub struct Hud {
@@ -75,6 +76,7 @@ impl Hud {
         maze: &Maze,
         player: &Player,
         enemies: &[Enemy],
+        keys_sprites: &[Sprite],
         block_size: usize,
     ) {
         let w = fb.width as i32;
@@ -102,7 +104,7 @@ impl Hud {
         }
 
         // 3) Mini-mapa con rayos (esquina inferior izquierda) — ahora tipo “ventana”
-        let pad = 12;
+        let pad = 6;
         let mm_h = (self.height - pad * 2).max(1);
         let mm_w = (mm_h as f32 * 1.25) as i32; // un pelín ancho
         let mm_x = pad;
@@ -123,6 +125,7 @@ impl Hud {
             maze,
             player,
             enemies,
+            keys_sprites,
             block_size,
             mm_x,
             mm_y,
@@ -132,6 +135,40 @@ impl Hud {
             self.minimap_cells_h,
             &self.minimap_style,
         );
+
+        // ------------------------------
+        // Indicador simple de llaves (texto bitmap rudimentario)
+        // ------------------------------
+        let keys_text = format!(
+            "Keys: {} {} {}",
+            if player.inv.key_yellow { "Y" } else { "-" },
+            if player.inv.key_blue   { "B" } else { "-" },
+            if player.inv.key_red    { "R" } else { "-" },
+        );
+
+        let pad_right = 12;
+        let pad_top   = 12;
+        let tx = w - (pad_right + (keys_text.len() as i32 * 8)).max(120);
+        let ty = y0 + pad_top;
+
+        // Fondo semitransparente para contraste
+        fill_rect(fb, tx - 6, ty - 6, 120, 20, (0,0,0,140));
+
+        // “Marcadores” muy simples por carácter (puedes sustituir por draw_text en GPU)
+        for (i, ch) in keys_text.bytes().enumerate() {
+            let cx = tx + (i as i32)*8;
+            for yy in 0..8 { for xx in 0..6 {
+                let on = match ch {
+                    b'Y' | b'B' | b'R' => (xx==1 || yy==1 || yy==6) || (xx==4 && yy>=2 && yy<=5),
+                    b'-' => yy==4 && xx>=1 && xx<=4,
+                    b':' => (xx==2 && (yy==2 || yy==5)),
+                    _ => false,
+                };
+                if on {
+                    fb.put_pixel_rgba(cx+xx, ty+yy, 240,240,240,255);
+                }
+            } }
+        }
     }
 }
 

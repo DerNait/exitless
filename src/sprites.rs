@@ -25,6 +25,9 @@ impl Sprite {
     }
 }
 
+#[inline]
+fn is_key_tex(ch: char) -> bool { ch == '1' || ch == '2' || ch == '3' }
+
 pub fn collect_sprites(maze: &Maze, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
     let mut v = Vec::new();
     for (j, row) in maze.iter().enumerate() {
@@ -34,6 +37,23 @@ pub fn collect_sprites(maze: &Maze, block_size: usize, tex: &TextureManager) -> 
                 let y = (j * block_size + block_size / 2) as f32;
                 let frames = tex.sheet_frames('e');
                 v.push(Sprite::new_animated(Vector2::new(x,y), 'e', 1.0, frames, 8.0, (i+j)%frames));
+            }
+        }
+    }
+    v
+}
+
+/// Recolecta llaves ubicadas en el mapa con caracteres '1','2','3'
+/// y devuelve un vector de sprites. Luego puedes limpiar el mapa.
+pub fn collect_keys(maze: &Maze, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
+    let mut v = Vec::new();
+    for (j, row) in maze.iter().enumerate() {
+        for (i, &c) in row.iter().enumerate() {
+            if is_key_tex(c) {
+                let x = (i * block_size + block_size / 2) as f32;
+                let y = (j * block_size + block_size / 2) as f32;
+                let frames = tex.sheet_frames(c);
+                v.push(Sprite::new_animated(Vector2::new(x,y), c, 1.0, frames, 6.0, 0));
             }
         }
     }

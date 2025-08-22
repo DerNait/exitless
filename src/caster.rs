@@ -14,7 +14,8 @@ pub struct Intersect {
 // Define qué cuenta como pared sólida para el DDA (los sprites 'e' NO son pared)
 #[inline]
 fn is_wall(c: char) -> bool {
-    matches!(c, '+' | '-' | '|' | '#' | 'g')
+    // Añadimos puertas (Y,B,R,G) como sólidos para el DDA
+    matches!(c, '+' | '-' | '|' | '#' | 'g' | 'Y' | 'B' | 'R' | 'G')
 }
 
 #[inline]
