@@ -30,18 +30,22 @@ impl TextureManager {
             ('h', "assets/hud_bg.png"),
             ('f', "assets/face.png"),
 
-            // 🔑 Llaves (sprite o spritesheet)
-            // '1' = amarilla, '2' = azul, '3' = roja
+            // 🔑 Llaves (sprite o spritesheet en mundo)
             ('1', "assets/keys1.png"),
             ('2', "assets/keys2.png"),
             ('3', "assets/keys3.png"),
 
-            // 🚪 Puertas de color (paredes texturizadas)
+            // 🔑 HUD icons de llaves (1 frame usualmente)
+            ('y', "assets/keyhud_yellow.png"), // HUD icon llave amarilla
+            ('b', "assets/keyhud_blue.png"),   // HUD icon llave azul
+            ('r', "assets/keyhud_red.png"),    // HUD icon llave roja
+
+            // 🚪 Puertas de color (paredes)
             ('Y', "assets/door_yellow.png"),
             ('B', "assets/door_blue.png"),
             ('R', "assets/door_red.png"),
 
-            // 🚪 Puerta de salida (requiere las tres llaves)
+            // 🚪 Puerta de salida
             ('G', "assets/door_exit.png"),
         ];
 

@@ -9,7 +9,49 @@ use crate::player::Player;
 use crate::enemy::Enemy;
 use crate::sprites::Sprite;
 
-/// HUD de 128px, textura de fondo 'h', cara 'f' centrada y mini-mapa “zoom cam” con rayos.
+/// Dirección de los slots de llaves
+#[derive(Clone, Copy)]
+pub enum KeySlotsDirection { Row, Column }
+
+/// Esquina de anclaje del contenedor de llaves
+#[derive(Clone, Copy)]
+pub enum KeySlotsAnchor {
+    BottomRight,
+    BottomLeft,
+    TopRight,
+    TopLeft,
+    /// Coordenadas absolutas (x,y) del *contenedor* relativo a la pantalla
+    Custom { x: i32, y: i32 },
+}
+
+/// Estilo visual del contenedor/slots (se mantiene para compat),
+/// pero NO se dibuja nada (todo transparente).
+#[derive(Clone, Copy)]
+pub struct KeySlotsStyle {
+    pub container_bg: (u8,u8,u8,u8), // ignorado (transparente)
+    pub slot_bg:      (u8,u8,u8,u8), // ignorado (transparente)
+    pub border:       (u8,u8,u8,u8), // ignorado
+    pub border_px:    i32,           // ignorado
+    pub icon_inset:   i32,           // margen interno del icono dentro del slot
+}
+
+/// Configuración del contenedor de llaves (posicionamiento y layout)
+#[derive(Clone, Copy)]
+pub struct KeySlotsConfig {
+    pub slot: i32,            // tamaño base del icono (px)
+    pub gap: i32,             // separación entre iconos
+    pub pad: i32,             // margen respecto al borde HUD/pantalla
+    pub container_pad: i32,   // ignorado (transparente)
+    pub dir: KeySlotsDirection,
+    pub anchor: KeySlotsAnchor,
+    pub offset_x: i32,        // ajuste fino X
+    pub offset_y: i32,        // ajuste fino Y
+    pub style: KeySlotsStyle, // mantiene icon_inset
+    /// Orden de los iconos (texturas HUD): 'y' (amarilla), 'b' (azul), 'r' (roja)
+    pub order: [char; 3],
+}
+
+/// HUD de 128px, textura de fondo 'h', cara 'f', minimapa y llaves transparentes.
 pub struct Hud {
     pub height: i32,          // px
     pub face_playing: bool,
@@ -23,10 +65,12 @@ pub struct Hud {
     pub face_rect_h: i32,
     pub minimap_style: MinimapColors, // colores configurables
 
-    /// ⬇️ NUEVO: tamaño de ventana del minimapa en celdas (ancho x alto)
-    /// Esto controla el "zoom". Menos celdas => más zoom.
+    /// Ventana del minimapa en celdas (ancho x alto) — controla zoom.
     pub minimap_cells_w: i32,
     pub minimap_cells_h: i32,
+
+    /// Config de llaves (solo sprites con alpha, sin fondos)
+    pub key_cfg: KeySlotsConfig,
 }
 
 impl Hud {
@@ -47,6 +91,26 @@ impl Hud {
             // ventana inicial: ~11x9 celdas (ajústalo a gusto)
             minimap_cells_w: 11,
             minimap_cells_h: 9,
+
+            // 🎛️ KeySlotsConfig: solo sprites transparentes (sin placa/fondo/borde)
+            key_cfg: KeySlotsConfig {
+                slot: 100,     // tamaño del icono (px)
+                gap: 8,
+                pad: 8,
+                container_pad: 0, // ignorado
+                dir: KeySlotsDirection::Row,
+                anchor: KeySlotsAnchor::BottomRight,
+                offset_x: -20,
+                offset_y: 0,
+                style: KeySlotsStyle {
+                    container_bg: (0, 0, 0, 0), // transparente
+                    slot_bg:      (0, 0, 0, 0), // transparente
+                    border:       (0, 0, 0, 0), // transparente
+                    border_px:    0,
+                    icon_inset:   0,            // icono a tamaño completo del slot
+                },
+                order: ['y', 'b', 'r'],
+            },
         }
     }
 
@@ -76,7 +140,7 @@ impl Hud {
         maze: &Maze,
         player: &Player,
         enemies: &[Enemy],
-        keys_sprites: &[Sprite],
+        keys_sprites: &[Sprite], // para pintar llaves en minimapa
         block_size: usize,
     ) {
         let w = fb.width as i32;
@@ -103,24 +167,17 @@ impl Hud {
             blit_sheet_frame_to_rect(fb, tex, 'f', frame_idx, dst_x, dst_y, dst_w, dst_h);
         }
 
-        // 3) Mini-mapa con rayos (esquina inferior izquierda) — ahora tipo “ventana”
+        // 3) Mini-mapa (abajo-izquierda, por defecto)
         let pad = 6;
         let mm_h = (self.height - pad * 2).max(1);
         let mm_w = (mm_h as f32 * 1.25) as i32; // un pelín ancho
         let mm_x = pad;
         let mm_y = y0 + pad;
 
-        // Fondo suave del minimapa
-        fill_rect(
-            fb,
-            mm_x - 2,
-            mm_y - 2,
-            mm_w + 4,
-            mm_h + 4,
-            self.minimap_style.frame,
-        );
+        // Borde/fondo del minimapa (mantiene el frame)
+        fill_rect(fb, mm_x - 2, mm_y - 2, mm_w + 4, mm_h + 4, self.minimap_style.frame);
 
-        render_minimap_zoomed(
+        crate::renderer::render_minimap_zoomed(
             fb,
             maze,
             player,
@@ -136,43 +193,84 @@ impl Hud {
             &self.minimap_style,
         );
 
-        // ------------------------------
-        // Indicador simple de llaves (texto bitmap rudimentario)
-        // ------------------------------
-        let keys_text = format!(
-            "Keys: {} {} {}",
-            if player.inv.key_yellow { "Y" } else { "-" },
-            if player.inv.key_blue   { "B" } else { "-" },
-            if player.inv.key_red    { "R" } else { "-" },
-        );
+        // 4) Llaves transparentes (solo sprites con alpha)
+        self.render_key_icons_only(fb, tex, player, w, y0);
+    }
 
-        let pad_right = 12;
-        let pad_top   = 12;
-        let tx = w - (pad_right + (keys_text.len() as i32 * 8)).max(120);
-        let ty = y0 + pad_top;
+    /// Dibuja ÚNICAMENTE los sprites de las llaves presentes (sin placa/fondo/bordes).
+    fn render_key_icons_only(
+        &self,
+        fb: &mut Framebuffer,
+        tex: &TextureManager,
+        player: &Player,
+        screen_w: i32,
+        hud_y0: i32,
+    ) {
+        let cfg = self.key_cfg;
 
-        // Fondo semitransparente para contraste
-        fill_rect(fb, tx - 6, ty - 6, 120, 20, (0,0,0,140));
+        let slot = cfg.slot.max(8);
+        let gap  = cfg.gap.max(0);
+        let pad  = cfg.pad.max(0);
+        let inset = cfg.style.icon_inset.clamp(0, slot / 3);
 
-        // “Marcadores” muy simples por carácter (puedes sustituir por draw_text en GPU)
-        for (i, ch) in keys_text.bytes().enumerate() {
-            let cx = tx + (i as i32)*8;
-            for yy in 0..8 { for xx in 0..6 {
-                let on = match ch {
-                    b'Y' | b'B' | b'R' => (xx==1 || yy==1 || yy==6) || (xx==4 && yy>=2 && yy<=5),
-                    b'-' => yy==4 && xx>=1 && xx<=4,
-                    b':' => (xx==2 && (yy==2 || yy==5)),
-                    _ => false,
-                };
-                if on {
-                    fb.put_pixel_rgba(cx+xx, ty+yy, 240,240,240,255);
-                }
-            } }
+        // Dimensiones del contenido (3 posiciones, aunque no se dibuje nada si no hay llave)
+        let n = 3;
+        let (content_w, content_h) = match cfg.dir {
+            KeySlotsDirection::Row    => (slot * n + gap * (n - 1), slot),
+            KeySlotsDirection::Column => (slot,         slot * n + gap * (n - 1)),
+        };
+
+        // Posición base del contenido según ancla
+        let (mut sx0, mut sy0) = match cfg.anchor {
+            KeySlotsAnchor::BottomRight => (
+                screen_w - pad - content_w,
+                hud_y0 + self.height - pad - content_h
+            ),
+            KeySlotsAnchor::BottomLeft => (
+                pad,
+                hud_y0 + self.height - pad - content_h
+            ),
+            KeySlotsAnchor::TopRight => (
+                screen_w - pad - content_w,
+                hud_y0 + pad
+            ),
+            KeySlotsAnchor::TopLeft => (
+                pad,
+                hud_y0 + pad
+            ),
+            KeySlotsAnchor::Custom { x, y } => (x, y),
+        };
+
+        sx0 += cfg.offset_x;
+        sy0 += cfg.offset_y;
+
+        // Recorremos las 3 posiciones; sólo dibujamos el sprite si el jugador tiene esa llave
+        for (idx, key_ch) in cfg.order.iter().enumerate() {
+            let (x, y) = match cfg.dir {
+                KeySlotsDirection::Row    => (sx0 + idx as i32 * (slot + gap), sy0),
+                KeySlotsDirection::Column => (sx0, sy0 + idx as i32 * (slot + gap)),
+            };
+
+            let has_key = match *key_ch {
+                'y' => player.inv.key_yellow,
+                'b' => player.inv.key_blue,
+                'r' => player.inv.key_red,
+                _   => false,
+            };
+
+            if has_key {
+                blit_image_to_rect(
+                    fb, tex, *key_ch,
+                    x + inset, y + inset,
+                    slot - inset * 2, slot - inset * 2
+                );
+            }
+            // Si no tiene la llave → no se dibuja nada (totalmente transparente)
         }
     }
 }
 
-// Helpers de blit/fill
+// Helpers de blit/fill que ya usábamos en el HUD
 
 pub fn blit_image_to_rect(
     fb: &mut Framebuffer,
@@ -223,7 +321,7 @@ pub fn blit_sheet_frame_to_rect(
         let sy = ((y as f32 / dh as f32) * fh as f32).floor() as i32;
         let sy = sy.clamp(0, fh as i32 - 1);
         for x in 0..dw {
-            let sx = ((x as f32 / dw as f32) * fw as f32).floor() as i32;
+            let sx = ((x as f32 / dh as f32) * fw as f32).floor() as i32;
             let sx = sx.clamp(0, fw as i32 - 1);
             let px = x0 as i32 + sx;
             let py = y0 as i32 + sy;
