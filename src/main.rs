@@ -12,6 +12,7 @@ mod enemy;
 mod utils_grid;
 mod gamemanager;
 mod hud;
+mod physics;
 
 use raylib::prelude::*;
 use raylib::consts::TextureFilter;
@@ -25,6 +26,7 @@ use sprites::{collect_sprites, Sprite};
 use enemy::{Enemy, update_enemy};
 use gamemanager::{GameManager, GameState};
 use hud::Hud;
+use physics::resolve_player_collisions;
 
 fn recreate_enemies(cells: &[(i32,i32)], block_size: usize) -> Vec<Enemy> {
     let mut v = Vec::with_capacity(cells.len());
@@ -182,7 +184,12 @@ fn main() {
         }
 
         if gm.is_playing() {
-            crate::controller::process_events(&rl, &mut player);
+            crate::controller::process_events(&rl, &mut player, dt);
+
+            // ⬇️⬇️ COLISIONES: corrige al jugador si tocó paredes
+            let player_radius = (block_size as f32) * 0.30; // ~30% del tamaño de celda
+            resolve_player_collisions(&mut player.pos, player_radius, &maze, block_size, 2);
+
             for e in &mut enemies { update_enemy(e, &maze, player.pos, block_size, dt); }
         }
 
