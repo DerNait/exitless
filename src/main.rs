@@ -12,7 +12,7 @@ mod enemy;
 mod utils_grid;
 mod gamemanager;
 mod hud;
-mod physics;
+mod physics; // ⬅️ nuevo
 
 use raylib::prelude::*;
 use raylib::consts::TextureFilter;
@@ -26,7 +26,7 @@ use sprites::{collect_sprites, Sprite};
 use enemy::{Enemy, update_enemy};
 use gamemanager::{GameManager, GameState};
 use hud::Hud;
-use physics::resolve_player_collisions;
+use physics::resolve_player_collisions; // ⬅️ nuevo
 
 fn recreate_enemies(cells: &[(i32,i32)], block_size: usize) -> Vec<Enemy> {
     let mut v = Vec::with_capacity(cells.len());
@@ -50,6 +50,10 @@ fn main() {
         .size(screen_w, screen_h)
         .title("Raycasting con HUD + Minimap + Keys")
         .build();
+
+    // ⬇️ Capturar/ocultar cursor para estilo FPS (lo liberamos en GameOver/Win)
+    rl.set_target_fps(120);   // opcional, pero ayuda
+    rl.hide_cursor();  
 
     let mut framebuffer = Framebuffer::new(screen_w, screen_h, Color::BLACK);
     let tex_manager = TextureManager::new(&mut rl, &thread);
@@ -173,7 +177,7 @@ fn main() {
         hud.face_cooldown = 1.5;
     };
 
-    while !rl.window_should_close() {
+    while !rl.window_should_close() {        
         let dt = rl.get_frame_time();
         time_s += dt;
 
@@ -183,11 +187,18 @@ fn main() {
                      &mut maze, &mut keys_sprites, &mut enemy_spawn_cells);
         }
 
-        if gm.is_playing() {
-            crate::controller::process_events(&rl, &mut player, dt);
+        // Capturar/soltar cursor según estado
+        match gm.state {
+            GameState::Playing | GameState::JumpScare => rl.hide_cursor(),
+            GameState::GameOver | GameState::Win => rl.show_cursor(),
+        }
 
-            // ⬇️⬇️ COLISIONES: corrige al jugador si tocó paredes
-            let player_radius = (block_size as f32) * 0.30; // ~30% del tamaño de celda
+        if gm.is_playing() {
+            // ⬇️ NUEVO: controller con dt y mouse-look
+            crate::controller::process_events(&mut rl, &mut player, dt, screen_w, screen_h);
+
+            // ⬇️ Colisiones contra paredes/puertas
+            let player_radius = (block_size as f32) * 0.20;
             resolve_player_collisions(&mut player.pos, player_radius, &maze, block_size, 2);
 
             for e in &mut enemies { update_enemy(e, &maze, player.pos, block_size, dt); }
