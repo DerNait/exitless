@@ -18,11 +18,12 @@ impl TextureManager {
         let mut pixels = HashMap::new();
         let mut textures = HashMap::new();
         let texture_files = vec![
-            ('+', "assets/wall4.png"),
-            ('-', "assets/wall2.png"),
+            ('+', "assets/wall1.png"),
+            ('-', "assets/wall1.png"),
             ('|', "assets/wall1.png"),
-            ('g', "assets/wall5.png"),
+            ('@', "assets/wall2.png"),
             ('#', "assets/wall3.png"),
+            ('!', "assets/wall4.png"),
 
             // 🧟 Sprite/enemy & overlays/HUD
             ('e', "assets/enemy1.png"),

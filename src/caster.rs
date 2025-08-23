@@ -15,7 +15,7 @@ pub struct Intersect {
 #[inline]
 fn is_wall(c: char) -> bool {
     // Añadimos puertas (Y,B,R,G) como sólidos para el DDA
-    matches!(c, '+' | '-' | '|' | '#' | 'g' | 'Y' | 'B' | 'R' | 'G')
+    matches!(c, '+' | '-' | '|' | '#' | 'g' | 'Y' | 'B' | 'R' | 'G' | '@' | '!')
 }
 
 #[inline]
