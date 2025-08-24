@@ -17,7 +17,7 @@ impl Enemy {
     pub fn from_cell(ci: i32, cj: i32, bs: usize) -> Self {
         Self {
             pos: cell_center(ci, cj, bs),
-            speed: 45.0,
+            speed: 70.0,
             path: Vec::new(),
             replan_accum: 0.0,
         }

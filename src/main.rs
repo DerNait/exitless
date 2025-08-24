@@ -12,10 +12,14 @@ mod enemy;
 mod utils_grid;
 mod gamemanager;
 mod hud;
-mod physics; // ⬅️ nuevo
+mod physics;
+mod audiomanager;
 
 use raylib::prelude::*;
 use raylib::consts::TextureFilter;
+use raylib::core::audio::RaylibAudio;
+
+use audiomanager::{AudioManager, AudioConfig};
 
 use framebuffer::Framebuffer;
 use maze::{load_maze, find_char, maze_dims, Maze};
@@ -26,7 +30,7 @@ use sprites::{collect_sprites, Sprite};
 use enemy::{Enemy, update_enemy};
 use gamemanager::{GameManager, GameState};
 use hud::Hud;
-use physics::resolve_player_collisions; // ⬅️ nuevo
+use physics::resolve_player_collisions;
 
 fn recreate_enemies(cells: &[(i32,i32)], block_size: usize) -> Vec<Enemy> {
     let mut v = Vec::with_capacity(cells.len());
@@ -52,8 +56,44 @@ fn main() {
         .build();
 
     // ⬇️ Capturar/ocultar cursor para estilo FPS (lo liberamos en GameOver/Win)
-    rl.set_target_fps(120);   // opcional, pero ayuda
-    rl.hide_cursor();  
+    rl.set_target_fps(120);
+    rl.hide_cursor();
+
+    // ⬇️ Audio
+    let ra = RaylibAudio::init_audio_device().expect("No se pudo inicializar audio");
+
+    // Config editable (cambia valores si quieres ajustar niveles)
+    let audio_cfg = AudioConfig {
+        // Masters
+        master_music: 1.0,
+        master_sfx:   1.0,
+
+        // Volúmenes de cada música
+        vol_music_game:      1.0,
+        vol_music_jumpscare: 1.0,
+        vol_music_gameover:  0.9,
+        vol_music_win:       0.9,
+
+        // Loop enemigo
+        vol_enemy_loop: 1.5,
+
+        // SFX
+        vol_sfx_door_open: 1.5,
+        vol_sfx_key_pick:  1.0,
+        vol_sfx_jumpscare: 1.0,
+
+        // Fade y “3D”
+        fade_speed: 2.0,
+        enemy_max_dist: 600.0,
+
+        // Dónde se permite el loop del enemigo
+        enemy_loop_in_playing:   true,
+        enemy_loop_in_jumpscare: false,
+        enemy_loop_in_gameover:  false,
+        enemy_loop_in_win:       false,
+    };
+
+    let mut audio = AudioManager::new(&ra, audio_cfg);
 
     let mut framebuffer = Framebuffer::new(screen_w, screen_h, Color::BLACK);
     let tex_manager = TextureManager::new(&mut rl, &thread);
@@ -122,34 +162,37 @@ fn main() {
     // HUD
     let mut hud = Hud::new(&tex_manager);
 
-    // 🆕 reset helper: ahora también restaura puertas (maze) y llaves
+    // Track de estado previo
+    let mut prev_state = gm.state;
+
+    // Reset helper
     let mut do_reset = |player: &mut Player,
                         enemies: &mut Vec<Enemy>,
                         gm: &mut GameManager,
                         time_s: &mut f32,
                         hud: &mut Hud,
-                        maze_ref: &mut Maze,                 // ⬅️ NUEVO
-                        keys_ref: &mut Vec<Sprite>,          // ⬅️ NUEVO
-                        enemy_cells_ref: &mut Vec<(i32,i32)> // ⬅️ NUEVO
-    | {
-        // Restaurar laberinto desde copia prístina (vuelven puertas cerradas)
+                        maze_ref: &mut Maze,
+                        keys_ref: &mut Vec<Sprite>,
+                        enemy_cells_ref: &mut Vec<(i32,i32)>,
+                        audio_ref: &mut AudioManager|
+    {
+        // Restaurar laberinto
         *maze_ref = maze_original.clone();
 
-        // Recalcular spawns de enemigos desde el mapa restaurado
+        // Re-spawns enemigos
         enemy_cells_ref.clear();
         for (j,row) in maze_ref.iter().enumerate() {
             for (i,&c) in row.iter().enumerate() {
                 if c == 'e' { enemy_cells_ref.push((i as i32, j as i32)); }
             }
         }
-        // Limpiar 'e' del mapa (no son paredes)
         for row in maze_ref.iter_mut() {
             for c in row.iter_mut() {
                 if *c == 'e' { *c = ' '; }
             }
         }
 
-        // Regenerar llaves segun el mapa restaurado y limpiarlas del mapa
+        // Regenerar llaves y limpiar mapa
         *keys_ref = sprites::collect_keys(maze_ref, block_size, &tex_manager);
         for row in maze_ref.iter_mut() {
             for c in row.iter_mut() {
@@ -175,16 +218,20 @@ fn main() {
         hud.face_playing = false;
         hud.face_time = 0.0;
         hud.face_cooldown = 1.5;
+
+        // Audio: fuerza música game desde 0 y aplica reglas de estado
+        audio_ref.reset_to_game();
+        audio_ref.on_state_changed(GameState::Playing);
     };
 
-    while !rl.window_should_close() {        
+    while !rl.window_should_close() {
         let dt = rl.get_frame_time();
         time_s += dt;
 
         if (gm.is_game_over() || gm.is_win()) && rl.is_key_pressed(KeyboardKey::KEY_R) {
-            // 🔁 ahora también reinicia puertas y llaves
             do_reset(&mut player, &mut enemies, &mut gm, &mut time_s, &mut hud,
-                     &mut maze, &mut keys_sprites, &mut enemy_spawn_cells);
+                     &mut maze, &mut keys_sprites, &mut enemy_spawn_cells,
+                     &mut audio);
         }
 
         // Capturar/soltar cursor según estado
@@ -194,10 +241,9 @@ fn main() {
         }
 
         if gm.is_playing() {
-            // ⬇️ NUEVO: controller con dt y mouse-look
             crate::controller::process_events(&mut rl, &mut player, dt, screen_w, screen_h);
 
-            // ⬇️ Colisiones contra paredes/puertas
+            // Colisiones
             let player_radius = (block_size as f32) * 0.20;
             resolve_player_collisions(&mut player.pos, player_radius, &maze, block_size, 2);
 
@@ -207,9 +253,40 @@ fn main() {
         let enemy_positions = enemies.iter().map(|e| e.pos);
         gm.update(player.pos, enemy_positions, dt);
 
+        // “3D” enemigo + update general del audio
+        let max_hear = (block_size as f32) * 6.0;
+        audio.update_enemy_proximity(
+            player.pos,
+            player.a,
+            enemies.iter().map(|e| e.pos),
+            max_hear,
+        );
+        audio.update(dt);
+
+        // Cambio de estado → notifica reglas + música desde 0
+        if gm.state != prev_state {
+            audio.on_state_changed(gm.state);
+            match gm.state {
+                GameState::Playing => {
+                    audio.switch_music("game", false);
+                }
+                GameState::JumpScare => {
+                    audio.switch_music("jumpscare", true);
+                    audio.play_sfx("jumpscare", 1.0);
+                }
+                GameState::GameOver => {
+                    audio.switch_music("gameover", true);
+                }
+                GameState::Win => {
+                    audio.switch_music("win", true);
+                }
+            }
+            prev_state = gm.state;
+        }
+
         if gm.is_playing() { hud.update(dt); }
 
-        // --- Pick-up de llaves (cerca del jugador)
+        // Pick-up llaves
         if gm.is_playing() {
             let pick_radius = (block_size as f32) * 0.45;
             let pick_r2 = pick_radius * pick_radius;
@@ -218,6 +295,7 @@ fn main() {
                 let dy = s.pos.y - player.pos.y;
                 let d2 = dx*dx + dy*dy;
                 if d2 <= pick_r2 {
+                    audio.play_sfx("key_pick", 1.0);
                     match s.tex {
                         '1' => player.inv.key_yellow = true,
                         '2' => player.inv.key_blue   = true,
@@ -229,15 +307,24 @@ fn main() {
             });
         }
 
-        // --- Interacción con puertas (E)
+        // Interacción con puertas (E)
         if rl.is_key_pressed(KeyboardKey::KEY_E) && gm.is_playing() {
             let (ci, cj) = forward_cell(player.pos, player.a, block_size, block_size as f32 * 0.6);
             if cj >= 0 && (cj as usize) < maze.len() && ci >= 0 && (ci as usize) < maze[cj as usize].len() {
                 let cell = maze[cj as usize][ci as usize];
                 match cell {
-                    'Y' if player.inv.key_yellow => { maze[cj as usize][ci as usize] = ' '; }
-                    'B' if player.inv.key_blue   => { maze[cj as usize][ci as usize] = ' '; }
-                    'R' if player.inv.key_red    => { maze[cj as usize][ci as usize] = ' '; }
+                    'Y' if player.inv.key_yellow => {
+                        maze[cj as usize][ci as usize] = ' ';
+                        audio.play_sfx("door_open", 0.9);
+                    }
+                    'B' if player.inv.key_blue   => {
+                        maze[cj as usize][ci as usize] = ' ';
+                        audio.play_sfx("door_open", 0.9);
+                    }
+                    'R' if player.inv.key_red    => {
+                        maze[cj as usize][ci as usize] = ' ';
+                        audio.play_sfx("door_open", 0.9);
+                    }
                     'G' => {
                         if player.inv.has_all() {
                             gm.state = GameState::Win;
@@ -262,7 +349,7 @@ fn main() {
                     &tex_manager,
                     &sprites,
                     &enemies,
-                    &keys_sprites, // 🔑 llaves con oclusión real
+                    &keys_sprites,
                     time_s,
                     vp_y0,
                     vp_h,
@@ -277,8 +364,8 @@ fn main() {
                     block_size,
                     &tex_manager,
                     &sprites,
-                    &[],            // enemigos “ocultos” bajo overlay
-                    &keys_sprites,  // llaves también renderizadas debajo del overlay
+                    &[],            // enemigos ocultos
+                    &keys_sprites,
                     time_s,
                     vp_y0,
                     vp_h,
@@ -315,7 +402,7 @@ fn main() {
 
         match gm.state {
             GameState::Playing => {
-                d.draw_text("R: Reset | E: Abrir puerta", 10, 10, 18, Color::RAYWHITE);
+                d.draw_text("E: Abrir puerta", 10, 10, 18, Color::RAYWHITE);
             }
             GameState::JumpScare => { /* overlay tapa */ }
             GameState::GameOver => {

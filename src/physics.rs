@@ -5,7 +5,7 @@ use crate::maze::Maze;
 /// ¿Es sólida la celda? (mismo set que tu DDA)
 #[inline]
 fn is_solid(c: char) -> bool {
-    matches!(c, '+' | '-' | '|' | '#' | 'g' | 'Y' | 'B' | 'R' | 'G')
+    matches!(c, '+' | '-' | '|' | '#' | 'g' | 'Y' | 'B' | 'R' | 'G' | '@' | '!')
 }
 
 /// Empuja un punto (jugador) fuera del AABB de una celda sólida.

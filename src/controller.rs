@@ -16,16 +16,16 @@ pub fn process_events(
     screen_w: i32,
     screen_h: i32,
 ) {
-    const MOVE_SPEED: f32 = 80.0;   // px/s
+    const MOVE_SPEED: f32 = 80.0;    // px/s
+    const SPRINT_MULT: f32 = 1.5;    // 50% más rápido
     const MOUSE_SENS: f32 = 0.0010;  // rad/pixel
-    const DEADZONE:   f32 = 0.01;    // para evitar jitter cuando el mouse ya está centrado
+    const DEADZONE:   f32 = 0.01;    // para evitar jitter
 
     // --- Mouse look por "warp-to-center" ---
     if window.is_window_focused() {
         let cx = (screen_w as f32) * 0.5;
         let cy = (screen_h as f32) * 0.5;
 
-        // leemos posición absoluta y calculamos delta desde el centro
         let mp = window.get_mouse_position();
         let dx = mp.x - cx;
 
@@ -33,7 +33,6 @@ pub fn process_events(
             player.a = wrap_angle(player.a + dx * MOUSE_SENS);
         }
 
-        // re-centramos para permitir giro infinito y que el cursor no salga
         window.set_mouse_position(Vector2::new(cx, cy));
     }
 
@@ -60,8 +59,14 @@ pub fn process_events(
             let inv = 1.0 / mag2.sqrt();
             mx *= inv; my *= inv;
 
-            player.pos.x += mx * MOVE_SPEED * dt;
-            player.pos.y += my * MOVE_SPEED * dt;
+            // sprint con SHIFT
+            let mut speed = MOVE_SPEED;
+            if window.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) || window.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT) {
+                speed *= SPRINT_MULT;
+            }
+
+            player.pos.x += mx * speed * dt;
+            player.pos.y += my * speed * dt;
         }
     }
 }

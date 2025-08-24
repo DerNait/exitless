@@ -36,7 +36,7 @@ pub fn collect_sprites(maze: &Maze, block_size: usize, tex: &TextureManager) -> 
                 let x = (i * block_size + block_size / 2) as f32;
                 let y = (j * block_size + block_size / 2) as f32;
                 let frames = tex.sheet_frames('e');
-                v.push(Sprite::new_animated(Vector2::new(x,y), 'e', 1.0, frames, 8.0, (i+j)%frames));
+                v.push(Sprite::new_animated(Vector2::new(x,y), 'e', 1.0, frames, 24.0, (i+j)%frames));
             }
         }
     }
@@ -53,7 +53,7 @@ pub fn collect_keys(maze: &Maze, block_size: usize, tex: &TextureManager) -> Vec
                 let x = (i * block_size + block_size / 2) as f32;
                 let y = (j * block_size + block_size / 2) as f32;
                 let frames = tex.sheet_frames(c);
-                v.push(Sprite::new_animated(Vector2::new(x,y), c, 1.0, frames, 6.0, 0));
+                v.push(Sprite::new_animated(Vector2::new(x,y), c, 1.0, frames, 8.0, 0));
             }
         }
     }
