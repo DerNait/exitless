@@ -4,6 +4,7 @@ use raylib::core::audio::{Music, RaylibAudio, Sound};
 use raylib::prelude::Vector2;
 
 use crate::gamemanager::GameState;
+use crate::level::LevelTheme;
 
 /// Claves para identificar pistas
 const K_GAME: &str = "game";
@@ -144,26 +145,17 @@ impl<'a> AudioManager<'a> {
         let mut musics = HashMap::new();
         let mut sfx    = HashMap::new();
 
-        // --- Cargar MÚSICAS (NO las arrancamos aquí) ---
-        musics.insert(K_GAME, ra.new_music("assets/audio/music_gameplay.ogg")
-            .expect("music_gameplay.ogg"));
-        musics.insert(K_JUMP, ra.new_music("assets/audio/music_jumpscare.ogg")
-            .expect("music_jumpscare.ogg"));
-        musics.insert(K_GO,   ra.new_music("assets/audio/music_gameover.ogg")
-            .expect("music_gameover.ogg"));
-        musics.insert(K_WIN,  ra.new_music("assets/audio/music_win.ogg")
-            .expect("music_win.ogg"));
-        // Loop del enemigo
-        musics.insert(K_ENEM, ra.new_music("assets/audio/enemy_loop.ogg")
-            .expect("enemy_loop.ogg"));
+        // Cargamos *placeholder* iniciales (se reemplazan con load_theme_music)
+        musics.insert(K_GAME, ra.new_music("assets/audio/music_gameplay.ogg").expect("music_gameplay.ogg"));
+        musics.insert(K_JUMP, ra.new_music("assets/audio/music_jumpscare.ogg").expect("music_jumpscare.ogg"));
+        musics.insert(K_GO,   ra.new_music("assets/audio/music_gameover.ogg").expect("music_gameover.ogg"));
+        musics.insert(K_WIN,  ra.new_music("assets/audio/music_win.ogg").expect("music_win.ogg"));
+        musics.insert(K_ENEM, ra.new_music("assets/audio/enemy_loop.ogg").expect("enemy_loop.ogg"));
 
         // --- Cargar SFX ---
-        sfx.insert("door_open",
-            ra.new_sound("assets/audio/sfx_door_open.wav").expect("sfx_door_open.wav"));
-        sfx.insert("key_pick",
-            ra.new_sound("assets/audio/sfx_key_pick.wav").expect("sfx_key_pick.wav"));
-        sfx.insert("jumpscare",
-            ra.new_sound("assets/audio/sfx_jumpscare.wav").expect("sfx_jumpscare.wav"));
+        sfx.insert("door_open", ra.new_sound("assets/audio/sfx_door_open.wav").expect("sfx_door_open.wav"));
+        sfx.insert("key_pick",  ra.new_sound("assets/audio/sfx_key_pick.wav").expect("sfx_key_pick.wav"));
+        sfx.insert("jumpscare", ra.new_sound("assets/audio/sfx_jumpscare.wav").expect("sfx_jumpscare.wav"));
 
         let mut this = Self {
             ra,
@@ -178,23 +170,31 @@ impl<'a> AudioManager<'a> {
             state: GameState::Playing,
         };
 
-        // Arrancamos directamente la música de gameplay DESDE 0.
+        // Arrancamos gameplay desde 0 y paramos loop enemigo
         this.switch_music(K_GAME, true);
-        // Enemy loop empieza silenciado; sólo se habilita en Playing si hay enemigos cerca.
         this.stop_music(K_ENEM);
 
         this
     }
 
+    /// Reemplaza fuentes musicales según el tema (nivel).
+    pub fn load_theme_music(&mut self, theme: &LevelTheme) {
+        self.musics.insert(K_GAME, self.ra.new_music(theme.music_game).expect("music_game"));
+        self.musics.insert(K_JUMP, self.ra.new_music(theme.music_jump).expect("music_jump"));
+        self.musics.insert(K_GO,   self.ra.new_music(theme.music_go).expect("music_go"));
+        self.musics.insert(K_WIN,  self.ra.new_music(theme.music_win).expect("music_win"));
+        self.musics.insert(K_ENEM, self.ra.new_music(theme.enemy_loop).expect("enemy_loop"));
+
+        // Forzamos estado base
+        self.reset_to_game();
+    }
+
     /// Cambia la música objetivo. Si `instant` es true, corta la actual y
     /// arranca la nueva DESDE 0; si es false, hace crossfade (nueva arranca desde 0).
     pub fn switch_music(&mut self, key: &'static str, instant: bool) {
-        // Si ya estamos en esa música y es instant, reinicia desde 0.
         if instant {
             if let Some(cur) = self.current_key {
-                if cur != key {
-                    self.stop_music(cur);
-                }
+                if cur != key { self.stop_music(cur); }
             }
             self.start_music_from_zero(key);
             self.current_key = Some(key);
@@ -205,18 +205,12 @@ impl<'a> AudioManager<'a> {
         }
 
         if self.current_key == Some(key) && self.target_key.is_none() {
-            // Ya está sonando; no hacemos nada.
             return;
         }
 
-        // Prepara crossfade: current -> target(key)
         self.target_key = Some(key);
         self.fade_t = 0.0;
-
-        // Asegura que la nueva comience desde 0
         self.start_music_from_zero(key);
-
-        // Volúmenes iniciales (nueva 0, actual en base)
         self.apply_mix_volumes();
     }
 
@@ -231,40 +225,29 @@ impl<'a> AudioManager<'a> {
 
     /// Llamar cada frame.
     pub fn update(&mut self, dt: f32) {
-        // Actualiza todos los streams (aunque estén pausados/parados es inocuo)
-        for m in self.musics.values() {
-            m.update_stream();
-        }
+        for m in self.musics.values() { m.update_stream(); }
 
-        // Crossfade
         if let Some(target) = self.target_key {
             self.fade_t += (self.cfg.fade_speed * dt).clamp(0.0, 10.0);
             if self.fade_t >= 1.0 {
                 self.fade_t = 1.0;
-
-                // Cerrar la anterior
                 if let Some(cur) = self.current_key {
-                    if cur != target {
-                        self.stop_music(cur);
-                    }
+                    if cur != target { self.stop_music(cur); }
                 }
                 self.current_key = Some(target);
                 self.target_key = None;
             }
             self.apply_mix_volumes();
         } else {
-            // Asegura volumen correcto de la actual
             self.apply_mix_volumes();
         }
 
-        // Enemy loop: aplicar volumen calculado (si está permitido en este estado)
         if self.cfg.enemy_loop_allowed_in(self.state) {
             if let Some(loop_m) = self.musics.get(K_ENEM) {
                 let v = self.cfg.master_music * self.cfg.music_base(K_ENEM) * self.enemy_gain;
                 loop_m.set_volume(v.clamp(0.0, 1.0));
             }
         } else {
-            // Silenciar y parar
             self.enemy_gain = 0.0;
             self.stop_music(K_ENEM);
         }
@@ -273,14 +256,9 @@ impl<'a> AudioManager<'a> {
     /// Notifica cambio de estado de juego (para reglas como mutear el enemy loop).
     pub fn on_state_changed(&mut self, st: GameState) {
         self.state = st;
-
-        // Enemy loop permitido solo según config
         if !self.cfg.enemy_loop_allowed_in(st) {
             self.enemy_gain = 0.0;
             self.stop_music(K_ENEM);
-        } else {
-            // Si se permite, lo dejamos listo a 0 (se subirá con proximity).
-            // No lo arrancamos aún; se arrancará cuando haya ganancia > 0.
         }
     }
 
@@ -294,7 +272,6 @@ impl<'a> AudioManager<'a> {
     ) {
         self.enemy_max_dist = max_hear_dist.max(1.0);
 
-        // Si el loop no se permite en este estado, salimos.
         if !self.cfg.enemy_loop_allowed_in(self.state) {
             self.enemy_gain = 0.0;
             return;
@@ -302,31 +279,22 @@ impl<'a> AudioManager<'a> {
 
         let mut best_d2 = f32::INFINITY;
         let mut best_vec = Vector2::new(0.0, 0.0);
-
         for epos in enemy_positions {
             let dx = epos.x - player_pos.x;
             let dy = epos.y - player_pos.y;
-            let d2 = dx * dx + dy * dy;
-            if d2 < best_d2 {
-                best_d2 = d2;
-                best_vec = Vector2::new(dx, dy);
-            }
+            let d2 = dx*dx + dy*dy;
+            if d2 < best_d2 { best_d2 = d2; best_vec = Vector2::new(dx, dy); }
         }
 
-        if !best_d2.is_finite() {
-            self.enemy_gain = 0.0;
-            return;
-        }
+        if !best_d2.is_finite() { self.enemy_gain = 0.0; return; }
 
-        // Ganancia por distancia
         let d = best_d2.sqrt();
         let raw = (1.0 - (d / self.enemy_max_dist)).clamp(0.0, 1.0);
         self.enemy_gain = raw * raw;
 
-        // Paneo 0..1
         let fx = player_dir.cos();
         let fy = player_dir.sin();
-        let len = (best_vec.x * best_vec.x + best_vec.y * best_vec.y).sqrt().max(1e-6);
+        let len = (best_vec.x*best_vec.x + best_vec.y*best_vec.y).sqrt().max(1e-6);
         let tx = best_vec.x / len;
         let ty = best_vec.y / len;
         let cross = fx * ty - fy * tx; // [-1,1]
@@ -334,7 +302,6 @@ impl<'a> AudioManager<'a> {
 
         if let Some(loop_m) = self.musics.get(K_ENEM) {
             loop_m.set_pan(pan01);
-            // Arranca el loop si se volvió audible
             if self.enemy_gain > 0.0 && !loop_m.is_stream_playing() {
                 self.start_music_from_zero(K_ENEM);
             }
@@ -343,13 +310,8 @@ impl<'a> AudioManager<'a> {
 
     /// Resetea a música de juego desde 0 y detiene el resto (incluyendo enemy loop).
     pub fn reset_to_game(&mut self) {
-        // Para todo
         self.stop_all();
-
-        // Estado por defecto
         self.state = GameState::Playing;
-
-        // Arranca gameplay desde 0
         self.start_music_from_zero(K_GAME);
         self.current_key = Some(K_GAME);
         self.target_key = None;
@@ -359,18 +321,17 @@ impl<'a> AudioManager<'a> {
     }
 
     // ----------------- Internos -----------------
-
     fn stop_music(&mut self, key: &str) {
         if let Some(m) = self.musics.get(key) {
             m.set_volume(0.0);
-            m.stop_stream(); // al hacer play_stream() luego, inicia desde 0
+            m.stop_stream();
         }
     }
 
     fn start_music_from_zero(&mut self, key: &str) {
         if let Some(m) = self.musics.get(key) {
-            m.stop_stream();   // asegura posición 0
-            m.set_volume(0.0); // arranca silenciosa y la mezclamos en apply_mix_volumes
+            m.stop_stream();
+            m.set_volume(0.0);
             m.play_stream();
         }
     }
@@ -383,11 +344,8 @@ impl<'a> AudioManager<'a> {
     }
 
     fn apply_mix_volumes(&mut self) {
-        // Siempre dejamos todo en 0 salvo current/target (enemy loop se maneja aparte)
         for (k, m) in self.musics.iter() {
-            if *k != K_ENEM {
-                m.set_volume(0.0);
-            }
+            if *k != K_ENEM { m.set_volume(0.0); }
         }
 
         let mm = self.cfg.master_music.clamp(0.0, 1.0);

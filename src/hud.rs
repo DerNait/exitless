@@ -8,6 +8,7 @@ use crate::maze::Maze;
 use crate::player::Player;
 use crate::enemy::Enemy;
 use crate::sprites::Sprite;
+use crate::level::{LevelTheme, minimap_colors_for};
 
 /// Dirección de los slots de llaves
 #[derive(Clone, Copy)]
@@ -235,8 +236,8 @@ impl Hud {
         let mm_y = y0 + pad;
 
         fill_rect(fb, mm_x - 2, mm_y - 2, mm_w + 4, mm_h + 4, self.minimap_style.frame);
-
-        crate::renderer::render_minimap_zoomed(
+        
+        render_minimap_zoomed(
             fb, maze, player, enemies, keys_sprites,
             block_size, mm_x, mm_y, mm_w, mm_h,
             self.minimap_cells_w, self.minimap_cells_h, &self.minimap_style,
@@ -394,6 +395,10 @@ impl Hud {
             let dx = start_x + i as i32 * (dw + gap);
             blit_sheet_frame_to_rect_over(fb, tex, 'n', digits[i] as usize, dx, start_y, dw, dh);
         }
+    }
+
+    pub fn apply_theme(&mut self, theme: &LevelTheme) {
+        self.minimap_style = minimap_colors_for(theme);
     }
 }
 

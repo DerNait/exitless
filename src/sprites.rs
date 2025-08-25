@@ -1,12 +1,12 @@
 use raylib::prelude::Vector2;
 use crate::framebuffer::Framebuffer;
-use crate::maze::Maze;
 use crate::player::Player;
 use crate::textures::TextureManager;
+use crate::level::Lighting;
 
 const PI: f32 = std::f32::consts::PI;
 const TWO_PI: f32 = std::f32::consts::TAU;
-// Si tus PNGs tienen alpha real, puedes quitar el key para ahorrar comparaciones:
+// Si tus PNGs tienen alpha real, puedes quitar el key:
 const TRANSPARENT_KEY: (u8,u8,u8) = (152,0,136);
 
 #[derive(Clone, Copy, Debug)]
@@ -28,7 +28,7 @@ impl Sprite {
 #[inline]
 fn is_key_tex(ch: char) -> bool { ch == '1' || ch == '2' || ch == '3' }
 
-pub fn collect_sprites(maze: &Maze, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
+pub fn collect_sprites(maze: &Vec<Vec<char>>, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
     let mut v = Vec::new();
     for (j, row) in maze.iter().enumerate() {
         for (i, &c) in row.iter().enumerate() {
@@ -43,9 +43,7 @@ pub fn collect_sprites(maze: &Maze, block_size: usize, tex: &TextureManager) -> 
     v
 }
 
-/// Recolecta llaves ubicadas en el mapa con caracteres '1','2','3'
-/// y devuelve un vector de sprites. Luego puedes limpiar el mapa.
-pub fn collect_keys(maze: &Maze, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
+pub fn collect_keys(maze: &Vec<Vec<char>>, block_size: usize, tex: &TextureManager) -> Vec<Sprite> {
     let mut v = Vec::new();
     for (j, row) in maze.iter().enumerate() {
         for (i, &c) in row.iter().enumerate() {
@@ -72,6 +70,7 @@ pub fn render_sprites(
     time_s: f32,
     viewport_y0: i32,
     viewport_h: i32,
+    lighting: &Lighting, // NUEVO
 ) {
     let w = fb.width as i32;
     let h = viewport_h.max(1);
@@ -143,7 +142,7 @@ pub fn render_sprites(
         let mut tex_xf = (start_x as f32 - left) * step_tx;
         let mut tex_yf_start = (start_y as f32 - top) * step_ty;
 
-        let shade = (1.0 / (1.0 + perp * 0.001)).clamp(0.6, 1.0);
+        let shade = (1.0 / (1.0 + perp * lighting.atten)).clamp(lighting.shade_min, 1.0);
 
         let mut step_x_cols = 1;
 

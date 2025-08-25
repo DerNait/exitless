@@ -6,25 +6,20 @@ use crate::caster::cast_ray;
 use crate::textures::TextureManager;
 use crate::sprites::{Sprite, render_sprites};
 use crate::enemy::Enemy;
+use crate::level::LevelTheme;
 
-fn sky_floor_region(fb: &mut Framebuffer, y0: i32, vh: i32) {
+fn sky_floor_region(fb: &mut Framebuffer, y0: i32, vh: i32, sky: Color, floor: Color) {
     let half = vh / 2;
-    let sky   = Color::new(150, 142, 59, 255);
-    let floor = Color::new(133, 111, 27, 255);
-    for i in 0..half {
-        fb.fill_row(y0 + i, sky);
-    }
-    for i in half..vh {
-        fb.fill_row(y0 + i, floor);
-    }
+    for i in 0..half { fb.fill_row(y0 + i, sky); }
+    for i in half..vh { fb.fill_row(y0 + i, floor); }
 }
 
-/// Overlay en pantalla completa (se mantiene por compatibilidad)
+/// Overlay en pantalla completa
 pub fn draw_overlay_fullscreen(fb: &mut Framebuffer, tex: &TextureManager, key: char) {
     draw_overlay_viewport(fb, tex, key, 0, 0, fb.width, fb.height);
 }
 
-/// ⬅️ Overlay limitado a un rectángulo (viewport 3D)
+/// Overlay limitado a un rectángulo (viewport 3D)
 pub fn draw_overlay_viewport(
     fb: &mut Framebuffer,
     tex: &TextureManager,
@@ -65,30 +60,27 @@ pub fn draw_overlay_viewport(
 }
 
 pub fn draw_game_over_background(fb: &mut Framebuffer) {
-    for y in 0..fb.height {
-        fb.fill_row(y, Color::BLACK);
-    }
+    for y in 0..fb.height { fb.fill_row(y, Color::BLACK); }
 }
 
 pub fn draw_win_background(fb: &mut Framebuffer) {
-    for y in 0..fb.height {
-        fb.fill_row(y, Color::DARKGREEN);
-    }
+    for y in 0..fb.height { fb.fill_row(y, Color::DARKGREEN); }
 }
 
-/// Render 3D **en un viewport** (0..w, y0..y0+vh) con sprites y llaves ocluidas por muros.
+/// Render 3D en un viewport, con sprites y llaves ocluidas por muros, y tema por nivel.
 pub fn render_world_textured(
     fb: &mut Framebuffer,
     maze: &Maze,
     player: &Player,
     block_size: usize,
     tex: &TextureManager,
-    sprites: &[Sprite],        // decorativos estáticos (si tienes)
-    enemies: &[Enemy],         // enemigos (se convierten a sprites dinámicos)
-    keys_sprites: &[Sprite],   // 🔑 llaves animadas
+    sprites: &[Sprite],
+    enemies: &[Enemy],
+    keys_sprites: &[Sprite],
     time_s: f32,
     viewport_y0: i32,
     viewport_h: i32,
+    theme: &LevelTheme, // NUEVO
 ) {
     let w = fb.width as i32;
     let h = viewport_h.max(1);
@@ -98,8 +90,8 @@ pub fn render_world_textured(
     let hh = h as f32 * 0.5;
     let dist_to_plane = hw / (player.fov * 0.5).tan();
 
-    // Fondo cielo/suelo dentro del viewport
-    sky_floor_region(fb, y_off, h);
+    // Fondo cielo/suelo dentro del viewport según tema
+    sky_floor_region(fb, y_off, h, theme.sky, theme.floor);
 
     // z-buffer por columna
     let mut zbuf = vec![f32::INFINITY; w as usize];
@@ -131,11 +123,10 @@ pub fn render_world_textured(
         if tx >= tw as i32 { tx = tw as i32 - 1; }
 
         let step = th as f32 / line_h;
-        let start_tex_pos = ((draw_start as f32 - ((y_off as f32) + hh - line_h * 0.5)) * step)
-            .max(0.0);
+        let start_tex_pos = ((draw_start as f32 - ((y_off as f32) + hh - line_h * 0.5)) * step).max(0.0);
         let mut tex_pos = start_tex_pos;
 
-        let shade = (1.0 / (1.0 + dist * 0.001)).clamp(0.7, 1.0);
+        let shade = (1.0 / (1.0 + dist * theme.lighting.atten)).clamp(theme.lighting.shade_min, 1.0);
 
         for y in draw_start..=draw_end {
             let mut ty = tex_pos as i32;
@@ -154,13 +145,13 @@ pub fn render_world_textured(
         }
     }
 
-    // Sprites decorativos estáticos (si los usas)
-    render_sprites(fb, player, sprites, tex, &zbuf, block_size, time_s, y_off, h);
+    // Sprites decorativos estáticos
+    render_sprites(fb, player, sprites, tex, &zbuf, block_size, time_s, y_off, h, &theme.lighting);
 
-    // 🔑 Llaves animadas, ocluidas por muros (usa el mismo zbuf)
-    render_sprites(fb, player, keys_sprites, tex, &zbuf, block_size, time_s, y_off, h);
+    // Llaves animadas, ocluidas por muros
+    render_sprites(fb, player, keys_sprites, tex, &zbuf, block_size, time_s, y_off, h, &theme.lighting);
 
-    // Enemigos como sprites animados dinámicos (igual que antes)
+    // Enemigos como sprites animados dinámicos
     use crate::sprites::Sprite as DynSprite;
     let mut dyn_sprites: Vec<DynSprite> = Vec::new();
     for e in enemies {
@@ -173,5 +164,5 @@ pub fn render_world_textured(
             phase: 0,
         });
     }
-    render_sprites(fb, player, &dyn_sprites, tex, &zbuf, block_size, time_s, y_off, h);
+    render_sprites(fb, player, &dyn_sprites, tex, &zbuf, block_size, time_s, y_off, h, &theme.lighting);
 }

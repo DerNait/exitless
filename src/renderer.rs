@@ -9,36 +9,39 @@ use crate::caster::{cast_ray, Intersect};
 /// Colores configurables del minimapa (RGBA en u8).
 #[derive(Clone, Copy)]
 pub struct MinimapColors {
-    pub wall:     (u8,u8,u8,u8),
-    pub empty:    (u8,u8,u8,u8),
-    pub goal:     (u8,u8,u8,u8),
-    pub player:   (u8,u8,u8,u8),
-    pub enemy:    (u8,u8,u8,u8),
-    pub dir_line: (u8,u8,u8,u8),
-    pub fov_ray:  (u8,u8,u8,u8),
-    pub frame:    (u8,u8,u8,u8),
-
-    // ⬇️ NUEVO: colores para cada llave
-    pub key_y:    (u8,u8,u8,u8),
-    pub key_b:    (u8,u8,u8,u8),
-    pub key_r:    (u8,u8,u8,u8),
+    pub wall1:   (u8,u8,u8,u8), // '+', '-', '|'
+    pub wall2:   (u8,u8,u8,u8), // '@'
+    pub wall3:   (u8,u8,u8,u8), // '#'
+    pub wall4:   (u8,u8,u8,u8), // '!'
+    pub empty:   (u8,u8,u8,u8),
+    pub goal:    (u8,u8,u8,u8),
+    pub player:  (u8,u8,u8,u8),
+    pub enemy:   (u8,u8,u8,u8),
+    pub dir_line:(u8,u8,u8,u8),
+    pub fov_ray: (u8,u8,u8,u8),
+    pub frame:   (u8,u8,u8,u8),
+    pub key_y:   (u8,u8,u8,u8),
+    pub key_b:   (u8,u8,u8,u8),
+    pub key_r:   (u8,u8,u8,u8),
 }
 
 impl Default for MinimapColors {
     fn default() -> Self {
         Self {
-            wall:     (182, 180, 97,  255),
-            empty:    (150, 142, 59,  255),
-            goal:     (200, 60,  60,  255),
-            player:   (34,  190, 34,  255),
-            enemy:    (200, 40,  40,  255),
-            dir_line: (180, 255, 180, 255),
-            fov_ray:  (110, 160, 255, 160), // semitransparente
-            frame:    (0,   0,   0,   160), // borde/fondo minimapa
-
-            key_y:    (255, 215, 0,   255), // amarillo
-            key_b:    (60,  130, 255, 255), // azul
-            key_r:    (235, 60,  60,  255), // rojo
+            wall1:   (182,180, 97,255),
+            wall2:   (170,160, 80,255),
+            wall3:   (150,140, 70,255),
+            wall4:   (120,110, 55,255),
+            empty:   (150,142, 59,255),
+            goal:    (200, 60, 60,255),
+            player:  (34, 190, 34,255),
+            enemy:   (200, 40, 40,255),
+            dir_line:(180,255,180,255),
+            fov_ray: (110,160,255,160),
+            frame:   (0,0,0,160),
+            key_y:   (255,215,  0,255),
+            key_b:   (60, 130,255,255),
+            key_r:   (235, 60, 60,255),
         }
     }
 }
@@ -144,10 +147,14 @@ pub fn render_minimap_zoomed(
 
             let cell = maze[j as usize][i as usize];
             let (r,g,b,a) = match cell {
-                // ⬅️ Puertas como paredes
-                '+' | '-' | '|' | '#' | 'Y' | 'B' | 'R' | 'G' => style.wall,
-                'g' => style.goal, // (legacy)
-                _    => style.empty,
+                '+' | '-' | '|'          => style.wall1,
+                '@'                      => style.wall2,
+                '#'                      => style.wall3,
+                '!'                      => style.wall4,
+                // puertas: puedes asimilarlas a una pared “1”
+                'Y' | 'B' | 'R' | 'G'    => style.wall1,
+                'g'                      => style.goal, // legacy
+                _                        => style.empty,
             };
             fb.put_pixel_rgba(x + xx, y + yy, r, g, b, a);
         }
